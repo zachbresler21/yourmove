@@ -51,3 +51,18 @@ def git(cwd: Path, *args: str) -> str | None:
     except (OSError, subprocess.TimeoutExpired):
         return None
     return result.stdout.strip() if result.returncode == 0 else None
+
+
+def repos_at_or_below(root: Path) -> list[str]:
+    """The GitHub repos at root or up to two folders below it, for a board kept above several repos."""
+    folders = [root]
+    for child in sorted(root.iterdir()):
+        if child.is_dir() and not child.name.startswith("."):
+            folders += [child, *(c for c in sorted(child.iterdir()) if c.is_dir() and not c.name.startswith("."))]
+    slugs = []
+    for folder in folders:
+        if (folder / ".git").exists():
+            slug = repo_slug(git(folder, "remote", "get-url", "origin") or "")
+            if slug and slug not in slugs:
+                slugs.append(slug)
+    return slugs

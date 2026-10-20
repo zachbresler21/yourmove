@@ -30,7 +30,14 @@ SESSION_DAYS = 7
 
 def run(event: str, payload: dict[str, Any]) -> str:
     """What to print for one hook event. Plain text becomes context; Stop prints a JSON decision."""
-    found = locate(Path(payload["cwd"]))
+    cwd = Path(payload["cwd"])
+    board = trusted_board(cwd)
+    if board is None:
+        return ""
+    # This runs before every message, nearly all with no comment waiting, and git is the slow part.
+    if event == "prompt" and not notes.undelivered(board):
+        return ""
+    found = locate(board, cwd)
     if found is None:
         return ""
     board, worktree, cards = found
@@ -46,14 +53,15 @@ def run(event: str, payload: dict[str, Any]) -> str:
     raise ValueError(f"Unknown hook event: {event}")
 
 
-def locate(cwd: Path) -> tuple[Board, git.Worktree, Cards] | None:
+def trusted_board(cwd: Path) -> Board | None:
     directory = boards.nearest(cwd)
-    if directory is None:
-        return None
     # A repo can ship a .yourmove folder of its own. Only boards this user made or trusted get a voice.
-    if not user.is_trusted(directory):
+    if directory is None or not user.is_trusted(directory):
         return None
-    board = boards.load(directory)
+    return boards.load(directory)
+
+
+def locate(board: Board, cwd: Path) -> tuple[Board, git.Worktree, Cards] | None:
     worktree = git.current(cwd)
     if worktree is None:
         return None
@@ -156,25 +164,26 @@ def comment_text(board: Board, delivered: list[notes.Comment]) -> str:
 def stop(board: Board, worktree: git.Worktree, cards: Cards, payload: dict[str, Any]) -> str:
     """Block the stop once when the turn moved the work and the board did not hear about it."""
     session = payload["session_id"]
-    before = recall(session)
-    if before is None:
-        remember(session, worktree, cards)
-        return ""
-    own = mine(cards, worktree)
-    asks_for_card = not worktree.is_main and not own and worktree.head != before["head"]
-    asked_before = bool(before.get("asked_for_card"))
-    remember(session, worktree, cards, asked_for_card=asked_before or asks_for_card)
-
     reasons = [
         f'Comment {c["id"]} on "{c["title"]}" has no reply on the board: `yourmove reply {c["id"]} "<what you did>"`.'
         for c in notes.unanswered(board, session)
     ]
-    reasons += drift(worktree, cards, before, payload.get("transcript_path"))
-    if asks_for_card and not asked_before:
-        reasons.append(
-            "This worktree has new commits and no card. If the work will outlive this session, add one "
-            "with `yourmove add --here`. If it will not, say so and stop."
-        )
+    before = recall(session)
+    # Drift is measured against the last stop. A session with no snapshot yet, started before
+    # the plugin was installed, only gets one now; its unanswered comments still count.
+    if before is None:
+        remember(session, worktree, cards)
+    else:
+        own = mine(cards, worktree)
+        asks_for_card = not worktree.is_main and not own and worktree.head != before["head"]
+        asked_before = bool(before.get("asked_for_card"))
+        remember(session, worktree, cards, asked_for_card=asked_before or asks_for_card)
+        reasons += drift(worktree, cards, before, payload.get("transcript_path"))
+        if asks_for_card and not asked_before:
+            reasons.append(
+                "This worktree has new commits and no card. If the work will outlive this session, add one "
+                "with `yourmove add --here`. If it will not, say so and stop."
+            )
     if not reasons:
         return ""
     reason = "Before you stop, the yourmove board is out of date:\n" + "\n".join(f"- {r}" for r in reasons)

@@ -85,6 +85,22 @@ class Sync(BoardCase):
         self.assertEqual(boards.history(self.board)[-1]["by"], "sync")
 
 
+class Stopped(Exception):
+    pass
+
+
+class SyncLoop(BoardCase):
+    @mock.patch("yourmove.github.gh", return_value=None)
+    @mock.patch("time.sleep", side_effect=[None, None, Stopped])
+    def test_a_problem_is_logged_once_not_every_round(self, sleep: mock.MagicMock, gh: mock.MagicMock) -> None:
+        self.write_cards(card(pr=1))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(Stopped):
+            server.keep_in_sync(self.dir)
+        self.assertEqual(sleep.call_count, 3)
+        self.assertEqual(out.getvalue().count("could not read PR state"), 1)
+
+
 class Server(BoardCase):
     def setUp(self) -> None:
         super().setUp()
@@ -210,6 +226,41 @@ class CommandLine(BoardCase):
         self.assertEqual((made.owner, made.projects["shop"].repo), ("Ada", "acme/shop"))
         self.assertTrue(user.is_trusted(target))
         self.assertEqual(cli.main(["--board", str(target), "init"]), 1)
+
+    def test_init_above_several_repos_makes_a_project_for_each(self) -> None:
+        self.repo("shop", "acme/shop", ["checkout"])
+        self.repo("blog", "acme/blog")
+        self.repo("other-blog", "someone/blog")
+        target = self.root / "fresh" / boards.DIR_NAME
+        target.parent.mkdir()
+        for name in ("shop", "blog", "other-blog"):
+            (self.root / name).rename(target.parent / name)
+        with mock.patch.object(Path, "cwd", return_value=target.parent), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.main(["--board", str(target), "init", "--owner", "Ada"]), 0)
+        projects = boards.load(target).projects
+        self.assertEqual(
+            {key: p.repo for key, p in projects.items()},
+            {
+                "shop": "acme/shop",
+                "acme-blog": "acme/blog",
+                "someone-blog": "someone/blog",
+            },
+        )
+
+    def test_init_with_no_repo_anywhere_writes_nothing(self) -> None:
+        empty = self.root / "empty"
+        empty.mkdir()
+        with mock.patch.object(Path, "cwd", return_value=empty):
+            code, output = self.cli_at(empty / boards.DIR_NAME, "init")
+        self.assertEqual(code, 1)
+        self.assertIn("No GitHub repo", output)
+        self.assertFalse((empty / boards.DIR_NAME).exists())
+
+    def cli_at(self, board: Path, *args: str) -> tuple[int, str]:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            code = cli.main(["--board", str(board), *args])
+        return code, out.getvalue()
 
     def test_trust_lets_the_hooks_use_a_board(self) -> None:
         self.assertFalse(user.is_trusted(self.dir))

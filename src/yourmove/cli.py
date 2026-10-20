@@ -142,20 +142,38 @@ def run_init(args: argparse.Namespace) -> int:
         raise BoardError(f"There is already a board in {directory}.")
     cwd = Path.cwd()
     worktree = git.current(cwd)
-    repo = worktree.repo if worktree and worktree.repo else "owner/name"
-    key = repo.split("/")[-1].lower()
+    repos = [worktree.repo] if worktree and worktree.repo else git.repos_at_or_below(directory.parent)
+    if not repos:
+        raise BoardError(
+            f"No GitHub repo at or below {directory.parent}. Run `yourmove init` inside a repo with an origin, "
+            "or in the folder that holds your repos."
+        )
+    projects = project_entries(repos)
     owner = args.owner or git.git(cwd, "config", "user.name") or "me"
-    config = {
-        "owner": owner,
-        "projects": {key: {"name": key.replace("-", " ").title(), "color": "#3b82d6", "repo": repo}},
-    }
     directory.mkdir(parents=True)
-    (directory / boards.CONFIG_FILE).write_text(json.dumps(config, indent=2) + "\n")
+    (directory / boards.CONFIG_FILE).write_text(json.dumps({"owner": owner, "projects": projects}, indent=2) + "\n")
     (directory / boards.CARDS_FILE).touch()
     user.trust(directory)
-    print(f"Made a board in {directory}, owned by {owner}, with the project {key} ({repo}).")
-    print(f"Add your other projects to {directory / boards.CONFIG_FILE}. Then `yourmove serve` to see it.")
+    print(f"Made a board in {directory}, owned by {owner}, with {len(projects)} project(s): {', '.join(projects)}.")
+    print(f"Rename or add projects in {directory / boards.CONFIG_FILE}. Then `yourmove serve` to see it.")
     return 0
+
+
+PROJECT_COLORS = ("#3b82d6", "#1f9d63", "#e0674c", "#d99a00", "#7c4dcc", "#0e9aa7", "#c2410c", "#64748b")
+
+
+def project_entries(repos: list[str]) -> dict[str, dict[str, str]]:
+    """One project per repo, keyed by its name, or owner-name when two repos share a name."""
+    names = [repo.split("/")[-1].lower() for repo in repos]
+    projects = {}
+    for index, repo in enumerate(repos):
+        key = names[index] if names.count(names[index]) == 1 else repo.replace("/", "-").lower()
+        projects[key] = {
+            "name": key.replace("-", " ").title(),
+            "color": PROJECT_COLORS[index % len(PROJECT_COLORS)],
+            "repo": repo,
+        }
+    return projects
 
 
 def run_ls(args: argparse.Namespace) -> int:

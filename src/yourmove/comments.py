@@ -89,6 +89,11 @@ def is_addressed_to(comment: Comment, worktree: Worktree, cards: Cards, board: B
     return worktree.is_main and bool(owned_here)
 
 
+def undelivered(board: Board) -> list[Comment]:
+    delivered = user.deliveries()
+    return [c for c in load(board) if c["sig"] not in delivered]
+
+
 def deliver(board: Board, worktree: Worktree, session_id: str, cards: Cards) -> list[Comment]:
     """The comments no session has been handed yet, recorded as handed to this one."""
 

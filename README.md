@@ -175,6 +175,7 @@ The board is plain text on disk. Keep secrets and user data off it.
 
 ```sh
 PYTHONPATH=src python3 -m unittest discover -s tests -t tests
+CHROME=/path/to/chrome tests/e2e/run.sh    # the page, server, hooks and CLI together; needs Node 22+
 uvx ruff check src tests bin/yourmove && uvx ruff format --check src tests bin/yourmove
 uvx mypy src tests
 ```

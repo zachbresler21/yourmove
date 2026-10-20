@@ -116,11 +116,17 @@ def handler_for(directory: Path, port: int) -> type[BaseHTTPRequestHandler]:
 
 
 def keep_in_sync(directory: Path) -> None:
+    reported: set[str] = set()
     while True:
         try:
             board = boards.load(directory)
-            for move in github.apply(board, github.plan(board)[0]):
+            moves, unclear = github.plan(board)
+            for move in github.apply(board, moves):
                 print(f"sync: {move.card['id']} {move.card['state']} -> {move.to} ({move.why})", flush=True)
+            # A signed-out gh would otherwise stop the sync without a word. Each problem is logged once.
+            for note in sorted(set(unclear) - reported):
+                print(f"sync: {note}", flush=True)
+            reported = set(unclear)
         except BoardError as error:
             print(f"sync: {error}", flush=True)
         time.sleep(SYNC_MINUTES * 60)

@@ -73,6 +73,12 @@ class Routing(HookCase):
         self.assertEqual(self.hook("prompt", self.main), "")
         self.assertIn("Ship it?", self.hook("prompt", self.checkout))
 
+    def test_a_message_with_no_comment_waiting_never_runs_git(self) -> None:
+        self.write_cards(card(where="checkout"))
+        with mock.patch.object(git, "current") as current:
+            self.assertEqual(self.hook("prompt", self.checkout), "")
+        current.assert_not_called()
+
     def test_a_comment_is_delivered_once(self) -> None:
         self.write_cards(card(where="checkout"))
         self.comment_on("shop-checkout")
@@ -251,6 +257,12 @@ class Stop(HookCase):
         self.assertIn(f"yourmove reply {comment}", self.decision(self.checkout))
         notes.reply(self.board, comment, "Shipped.")
         self.assertEqual(self.decision(self.checkout), "")
+
+    def test_a_session_that_never_started_under_the_plugin_still_answers_comments(self) -> None:
+        self.write_cards(card(where="checkout"))
+        comment = self.comment_on("shop-checkout")
+        self.hook("prompt", self.checkout)
+        self.assertIn(f"yourmove reply {comment}", self.decision(self.checkout))
 
     def test_a_merge_in_the_transcript_moves_the_card_with_that_pr(self) -> None:
         self.write_cards(card(where="search", state="in-review", pr=[41, 42]))
