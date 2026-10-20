@@ -12,9 +12,12 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 from pathlib import Path
 from typing import Any
+
+from .board import BoardError
 
 SIGNED_FIELDS = ("id", "card", "title", "where", "project", "text", "at")
 
@@ -59,20 +62,57 @@ def trust(board_dir: Path) -> None:
 def key() -> bytes:
     """This machine's comment key, made on first use and readable by this user only."""
     path = private_dir(config_dir()) / "comment-key"
-    try:
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        return path.read_bytes()
-    made = secrets.token_hex(32).encode()
-    with os.fdopen(descriptor, "wb") as file:
-        file.write(made)
+    if not path.exists():
+        # Written whole beside the key, then linked into place, so a reader finds no key or all of one.
+        temp = path.with_name(f".comment-key.{os.getpid()}.{secrets.token_hex(4)}")
+        descriptor = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as file:
+            file.write(secrets.token_hex(32).encode())
+        try:
+            os.link(temp, path)
+        except FileExistsError:
+            pass  # Another process linked its key first. That one is the key.
+        finally:
+            temp.unlink()
+    made = path.read_bytes()
+    # A short or empty key would let anyone forge a comment, so never sign or check with one.
+    if not re.fullmatch(rb"[0-9a-f]{64}", made):
+        raise BoardError(
+            f"{path} is not a yourmove comment key. Delete it to make a new one; comments signed with it are lost."
+        )
     return made
 
 
-def signature(comment: dict[str, Any]) -> str:
-    signed = json.dumps([comment.get(field) for field in SIGNED_FIELDS], ensure_ascii=False)
+def signature(comment: dict[str, Any], board_dir: Path) -> str:
+    # The board is signed too, so a comment copied onto another board does not count there.
+    signed = json.dumps(
+        [str(board_dir.resolve()), *(comment.get(field) for field in SIGNED_FIELDS)], ensure_ascii=False
+    )
     return hmac.new(key(), signed.encode(), hashlib.sha256).hexdigest()
 
 
-def is_signed(comment: dict[str, Any]) -> bool:
-    return hmac.compare_digest(str(comment.get("sig", "")), signature(comment))
+def is_signed(comment: dict[str, Any], board_dir: Path) -> bool:
+    return hmac.compare_digest(str(comment.get("sig", "")), signature(comment, board_dir))
+
+
+def delivery_file() -> Path:
+    return state_dir() / "delivered-comments"
+
+
+def deliveries() -> dict[str, str]:
+    """Which session each comment went to, by signature.
+
+    Kept here and not on the board, where anyone who can edit the file could clear a delivery
+    and have an old comment handed to a session again.
+    """
+    try:
+        lines = delivery_file().read_text().splitlines()
+    except FileNotFoundError:
+        return {}
+    return dict(line.split(" ", 1) for line in lines if " " in line)
+
+
+def record_deliveries(signatures: list[str], session: str) -> None:
+    private_dir(state_dir())
+    with delivery_file().open("a") as file:
+        file.writelines(f"{sig} {session}\n" for sig in signatures)

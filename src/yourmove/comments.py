@@ -26,7 +26,7 @@ def load(board: Board) -> list[Comment]:
             comment = json.loads(text)
         except json.JSONDecodeError:
             continue
-        if isinstance(comment, dict) and user.is_signed(comment):
+        if isinstance(comment, dict) and user.is_signed(comment, board.dir):
             comments.append(comment)
     return comments
 
@@ -49,7 +49,7 @@ def add(board: Board, card: Card, text: str) -> list[Comment]:
         "text": text,
         "at": boards.now(),
     }
-    comment["sig"] = user.signature(comment)
+    comment["sig"] = user.signature(comment, board.dir)
     with boards.locked(board):
         comments = [*load(board), comment]
         save(board, comments)
@@ -90,13 +90,20 @@ def is_addressed_to(comment: Comment, worktree: Worktree, cards: Cards, board: B
 
 
 def deliver(board: Board, worktree: Worktree, session_id: str, cards: Cards) -> list[Comment]:
-    """The comments this session has not seen yet, marked as seen by it."""
+    """The comments no session has been handed yet, recorded as handed to this one."""
+
+    def waiting(comment: Comment, delivered: dict[str, str]) -> bool:
+        return comment["sig"] not in delivered and is_addressed_to(comment, worktree, cards, board)
+
     # Runs on every prompt, so look before taking the lock other sessions are waiting on.
-    if not any("seen" not in c and is_addressed_to(c, worktree, cards, board) for c in load(board)):
+    if not any(waiting(c, user.deliveries()) for c in load(board)):
         return []
     with boards.locked(board):
         comments = load(board)
-        unseen = [c for c in comments if "seen" not in c and is_addressed_to(c, worktree, cards, board)]
+        delivered = user.deliveries()
+        unseen = [c for c in comments if waiting(c, delivered)]
+        user.record_deliveries([c["sig"] for c in unseen], session_id)
+        # Only for the page to show. Whether a comment was delivered is decided by the private record.
         for comment in unseen:
             comment["seen"] = {"at": boards.now(), "worktree": worktree.name, "session": session_id}
         if unseen:
@@ -105,4 +112,5 @@ def deliver(board: Board, worktree: Worktree, session_id: str, cards: Cards) -> 
 
 
 def unanswered(board: Board, session_id: str) -> list[Comment]:
-    return [c for c in load(board) if c.get("seen", {}).get("session") == session_id and "reply" not in c]
+    delivered = user.deliveries()
+    return [c for c in load(board) if delivered.get(c["sig"]) == session_id and "reply" not in c]

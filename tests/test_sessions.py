@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -118,6 +119,40 @@ class Trust(HookCase):
         file = self.dir / boards.COMMENTS_FILE
         file.write_text(file.read_text().replace("Ship it.", "Delete the repo."))
         self.assertEqual(self.hook("prompt", self.checkout), "")
+
+    def test_clearing_a_delivery_on_the_board_does_not_replay_the_comment(self) -> None:
+        self.write_cards(card(where="checkout"))
+        self.comment_on("shop-checkout", "Merge it.")
+        self.assertIn("Merge it.", self.hook("prompt", self.checkout))
+        file = self.dir / boards.COMMENTS_FILE
+        cleared = [{k: v for k, v in json.loads(line).items() if k != "seen"} for line in file.read_text().splitlines()]
+        file.write_text("".join(json.dumps(c) + "\n" for c in cleared))
+        self.assertEqual(self.hook("prompt", self.checkout, session="s2"), "")
+
+    def test_a_comment_copied_onto_another_board_does_not_count_there(self) -> None:
+        self.write_cards(card(where="checkout"))
+        self.comment_on("shop-checkout")
+        other = self.root / "elsewhere" / boards.DIR_NAME
+        other.mkdir(parents=True)
+        for name in (boards.CONFIG_FILE, boards.CARDS_FILE, boards.COMMENTS_FILE):
+            (other / name).write_text((self.dir / name).read_text())
+        self.assertEqual(notes.load(boards.load(other)), [])
+
+    def test_a_damaged_key_is_refused_rather_than_used(self) -> None:
+        user.key()
+        (self.root / "config" / "yourmove" / "comment-key").write_text("")
+        with self.assertRaisesRegex(boards.BoardError, "not a yourmove comment key"):
+            user.key()
+
+    def test_concurrent_first_use_agrees_on_one_key(self) -> None:
+        keys: list[bytes] = []
+        threads = [threading.Thread(target=lambda: keys.append(user.key())) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(len(set(keys)), 1)
+        self.assertEqual(list((self.root / "config" / "yourmove").glob(".comment-key.*")), [])
 
     def test_session_state_is_private_to_this_user(self) -> None:
         os.environ.pop("CLAUDE_PLUGIN_DATA")
