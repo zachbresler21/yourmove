@@ -1,0 +1,14 @@
+{
+  "name": "yourmove",
+  "description": "yourmove: a board your coding agents keep for you.",
+  "owner": {
+    "name": "Zach Bresler"
+  },
+  "plugins": [
+    {
+      "name": "yourmove",
+      "source": ".",
+      "description": "A board your coding agents keep for you."
+    }
+  ]
+}

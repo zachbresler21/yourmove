@@ -1,0 +1,16 @@
+{
+  "name": "yourmove",
+  "version": "0.1.0",
+  "description": "A board your coding agents keep for you: every card names its next move, and the ones waiting on you say exactly what to answer.",
+  "license": "MIT",
+  "keywords": [
+    "kanban",
+    "board",
+    "worktrees",
+    "status",
+    "hooks"
+  ],
+  "author": {
+    "name": "Zach Bresler"
+  }
+}

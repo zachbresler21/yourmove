@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Board</title>
+<link rel="icon" href="favicon.svg">
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #f4f2ee;
+  --card: #ffffff;
+  --text: #1d1b18;
+  --muted: #645f57;
+  --line: #d6d1c7;
+  --accent: #b93c0a;
+  --accent-bg: #fae6da;
+  --several: #8a857d;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #151412;
+    --card: #262422;
+    --text: #f1eee8;
+    --muted: #a8a298;
+    --line: #3b3834;
+    --accent: #fb923c;
+    --accent-bg: #33200f;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  font: 100%/1.4 system-ui, -apple-system, sans-serif;
+}
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.75rem;
+  padding: 0.5rem 1rem;
+}
+h1 { margin: 0; font-size: 1.125rem; }
+.checked { color: var(--muted); font-size: 0.8125rem; }
+.filters { display: flex; flex-wrap: wrap; gap: 0.375rem; margin-left: auto; }
+.filters button {
+  min-height: 2.75rem;
+  padding: 0 0.875rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+.filters button[aria-pressed="true"] {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--bg);
+  font-weight: 700;
+}
+
+#problem {
+  margin: 0 1rem 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--accent);
+  border-radius: 0.5rem;
+  background: var(--accent-bg);
+  font-size: 0.875rem;
+  white-space: pre-line;
+}
+
+main {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(15rem, 1.35fr) repeat(6, minmax(11.25rem, 1fr));
+  grid-template-rows: minmax(0, 1fr);
+  gap: 0.75rem;
+  padding: 0 1rem 1rem;
+  overflow-x: auto;
+}
+.column { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.column h2 {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: 0;
+  padding: 0.5rem 0.125rem 0.375rem;
+  border-bottom: 2px solid var(--line);
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+.column h2 .count { color: var(--muted); font-weight: 500; }
+.column .hint { margin: 0.25rem 0.125rem 0; color: var(--muted); font-size: 0.75rem; }
+.column > ul {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.5rem 0 0;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-width: thin;
+}
+.column.needs-you { padding: 0 0.5rem 0.5rem; border-radius: 0.75rem; background: var(--accent-bg); }
+.column.needs-you h2 { border-color: var(--accent); color: var(--accent); }
+.column.needs-you h2 .count { color: var(--accent); font-weight: 700; }
+
+.card {
+  padding: 0.5rem 0.625rem;
+  border-left: 4px solid var(--project);
+  border-radius: 0.5rem;
+  background: var(--card);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.07);
+  overflow-wrap: anywhere;
+}
+.card h3 { margin: 0; font-size: 0.875rem; font-weight: 650; line-height: 1.3; }
+.card p { margin: 0.25rem 0 0; font-size: 0.8125rem; }
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.125rem 0.5rem;
+  margin-top: 0.375rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.meta .project { font-weight: 600; }
+.meta a { color: inherit; }
+.meta code { font: 0.6875rem ui-monospace, monospace; }
+.meta .waiting { padding: 0 0.375rem; border: 1px solid var(--line); border-radius: 999px; }
+.meta .age { margin-left: auto; }
+.meta .stale { color: var(--accent); font-weight: 700; }
+.empty { padding: 0.5rem 0.125rem; color: var(--muted); font-size: 0.8125rem; }
+
+.choices { display: flex; flex-wrap: wrap; gap: 0.375rem; margin-top: 0.5rem; }
+.choices button {
+  min-height: 2.75rem;
+  padding: 0.25rem 0.75rem;
+  border: 1px solid var(--accent);
+  border-radius: 0.375rem;
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8125rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Small text buttons. The padding and matching negative margin give a 44px hit area without making the card taller. */
+.quiet {
+  margin: -0.875rem -0.375rem;
+  padding: 0.875rem 0.375rem;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.comments { margin: 0.5rem 0 0; padding: 0; list-style: none; }
+.comment { padding: 0.375rem 0; border-top: 1px solid var(--line); }
+.comment .status { color: var(--muted); font-size: 0.75rem; }
+.comment .reply { font-weight: 600; }
+.comment .quiet { color: var(--muted); font-size: 0.75rem; }
+.composer { display: flex; flex-wrap: wrap; gap: 0.375rem; margin-top: 0.5rem; }
+.composer textarea {
+  flex: 1 0 100%;
+  padding: 0.375rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.375rem;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8125rem;
+  resize: vertical;
+}
+.composer button {
+  min-height: 2.75rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.375rem;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+.composer button[type="submit"] {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--bg);
+  font-weight: 700;
+}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="heading">Board</h1>
+  <span id="checked" class="checked"></span>
+  <nav id="filters" class="filters" aria-label="Filter by project"></nav>
+</header>
+<p id="problem" role="alert" hidden></p>
+<main id="board"></main>
+
+<script>
+const COLUMNS = {
+  'needs-you': ['Needs you', 'Your move'],
+  planning: ['Planning', 'Not started'],
+  'in-progress': ['In progress', 'Being built'],
+  'in-review': ['In review', 'PR open'],
+  'needs-testing': ['Needs testing', 'Not merged yet'],
+  'needs-deploy': ['Needs deploy', 'Merged into main'],
+  live: ['Live', 'Shipped or running'],
+}
+const RELOAD_MS = 10000
+const GONE = 'This card was renamed or removed. Its comments are still here.'
+
+const main = document.getElementById('board')
+const problem = document.getElementById('problem')
+const checked = document.getElementById('checked')
+const filters = document.getElementById('filters')
+const heading = document.getElementById('heading')
+
+let board = null // the last good answer from /api/board
+let draft = null // { card, text } while a comment is being written
+let serverProblem = ''
+let drawn = ''
+
+const projectsOf = card => [].concat(card.project ?? [])
+
+function el(tag, className, text) {
+  const node = document.createElement(tag)
+  if (className) node.className = className
+  if (text) node.textContent = text
+  return node
+}
+
+function daysSince(day) {
+  return Math.round((Date.parse(board.today) - Date.parse(day)) / 86400000)
+}
+
+function selectedProject() {
+  const project = decodeURIComponent(location.hash.slice(1))
+  return board.projects[project] ? project : ''
+}
+
+function age(card) {
+  const days = daysSince(card.updated)
+  const label = days <= 0 ? 'today' : `${days}d`
+  const stale = card.state !== 'live' && days >= board.staleAfterDays
+  const node = el('span', stale ? 'age stale' : 'age', stale ? `${label}, stale` : label)
+  node.title = `Last checked ${card.updated}`
+  return node
+}
+
+function cardItem(card) {
+  const item = el('li', 'card')
+  const projects = projectsOf(card)
+  item.style.setProperty('--project', projects.length === 1 ? board.projects[projects[0]].color : 'var(--several)')
+
+  const meta = el('div', 'meta')
+  meta.append(el('span', 'project', projects.map(key => board.projects[key]?.name ?? key).join(', ')))
+  const repo = board.projects[projects[0]]?.repo
+  for (const number of [].concat(card.pr ?? [])) {
+    const link = el('a', '', `#${number}`)
+    link.href = `https://github.com/${repo}/pull/${number}`
+    link.target = '_blank'
+    link.rel = 'noopener'
+    link.setAttribute('aria-label', `Pull request ${number}`)
+    meta.append(link)
+  }
+  if (card.where) meta.append(el('code', '', card.where))
+  if (card.waiting) meta.append(el('span', 'waiting', `Waiting on ${card.waiting}`))
+  const writing = draft?.card === card.id
+  if (!card.gone && !writing) {
+    const add = el('button', 'quiet', 'Comment')
+    add.type = 'button'
+    add.setAttribute('aria-label', `Comment on ${card.title}`)
+    add.onclick = () => {
+      draft = { card: card.id, text: '' }
+      draw()
+    }
+    meta.append(add)
+  }
+  if (!card.gone) meta.append(age(card))
+
+  item.append(el('h3', '', card.title), el('p', '', card.next))
+  const written = board.comments.filter(comment => comment.card === card.id)
+  const choices = card.state === 'needs-you' && !written.some(comment => !comment.reply) ? card.choices ?? [] : []
+  if (choices.length) item.append(choiceButtons(card, choices))
+  item.append(meta)
+  if (written.length) {
+    const list = el('ul', 'comments')
+    list.append(...written.map(commentItem))
+    item.append(list)
+  }
+  if (writing) item.append(composer(card))
+  return item
+}
+
+// The answers a session offered on a needs-you card. One press sends it, the same as a typed comment.
+function choiceButtons(card, choices) {
+  const group = el('div', 'choices')
+  group.setAttribute('role', 'group')
+  group.setAttribute('aria-label', `Answers for ${card.title}`)
+  for (const choice of choices) {
+    const button = el('button', '', choice)
+    button.type = 'button'
+    button.setAttribute('aria-label', `Answer ${card.title}: ${choice}`)
+    button.onclick = () => send('POST', 'api/comments', { card: card.id, text: choice }).then(draw)
+    group.append(button)
+  }
+  return group
+}
+
+function commentStatus(comment) {
+  if (comment.reply) return `Claude: ${comment.reply.text}`
+  const time = at => new Date(at).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+  if (comment.seen) return `Claude has it, since ${time(comment.seen.at)}`
+  return `Goes to Claude with your next message in ${comment.where || 'the main worktree'}`
+}
+
+function commentItem(comment) {
+  const item = el('li', 'comment')
+  const remove = el('button', 'quiet', 'Delete')
+  remove.type = 'button'
+  remove.setAttribute('aria-label', `Delete comment: ${comment.text}`)
+  remove.onclick = () => send('DELETE', `api/comments/${comment.id}`).then(draw)
+  item.append(el('p', '', comment.text), el('p', comment.reply ? 'reply' : 'status', commentStatus(comment)), remove)
+  return item
+}
+
+function composer(card) {
+  const form = el('form', 'composer')
+  const field = el('textarea')
+  field.value = draft.text
+  field.rows = 3
+  field.maxLength = 2000
+  field.setAttribute('aria-label', `Comment on ${card.title}`)
+  field.oninput = () => { draft.text = field.value }
+  field.onkeydown = event => {
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) form.requestSubmit()
+    if (event.key === 'Escape') cancel.click()
+  }
+  const submit = el('button', '', 'Send to Claude')
+  submit.type = 'submit'
+  const cancel = el('button', '', 'Cancel')
+  cancel.type = 'button'
+  cancel.onclick = () => {
+    draft = null
+    draw()
+  }
+  form.onsubmit = async event => {
+    event.preventDefault()
+    const text = field.value.trim()
+    if (!text) return
+    if (await send('POST', 'api/comments', { card: card.id, text })) draft = null
+    draw()
+  }
+  form.append(field, submit, cancel)
+  return form
+}
+
+async function send(method, path, body) {
+  const response = await fetch(path, {
+    method,
+    headers: body ? { 'Content-Type': 'application/json' } : {},
+    body: body && JSON.stringify(body),
+  }).catch(() => null)
+  serverProblem = response?.ok ? '' : 'That did not save. Is `yourmove serve` still running?'
+  if (response?.ok) board.comments = await response.json()
+  showProblems()
+  return Boolean(response?.ok)
+}
+
+// A comment outlives its card: the card can be renamed or removed before Claude answers.
+function goneCards() {
+  const ids = new Set(board.cards.map(card => card.id))
+  const gone = new Map(board.comments.filter(comment => !ids.has(comment.card)).map(comment => [comment.card, comment]))
+  return [...gone.values()].map(comment => ({
+    id: comment.card, title: comment.title, project: comment.project, next: GONE, state: 'needs-you', gone: true,
+  }))
+}
+
+function column(state, columnCards) {
+  const [label, hint] = COLUMNS[state]
+  const section = el('section', `column ${state}`)
+  section.setAttribute('aria-label', `${label}: ${columnCards.length}`)
+  const title = el('h2', '', label)
+  title.append(el('span', 'count', String(columnCards.length)))
+  const list = el('ul')
+  list.append(...(columnCards.length ? columnCards.map(cardItem) : [el('li', 'empty', 'Nothing here')]))
+  section.append(title, el('p', 'hint', hint), list)
+  return section
+}
+
+function drawFilters() {
+  const wanted = JSON.stringify(board.projects)
+  if (filters.dataset.drawn === wanted) return
+  filters.dataset.drawn = wanted
+  filters.replaceChildren()
+  for (const [key, label] of [['', 'All'], ...Object.entries(board.projects).map(([key, p]) => [key, p.name])]) {
+    const button = el('button', '', label)
+    button.type = 'button'
+    button.dataset.project = key
+    button.onclick = () => { location.hash = key }
+    filters.append(button)
+  }
+}
+
+function draw() {
+  if (!board) return
+  const project = selectedProject()
+  // Redrawing drops a text selection, so skip it when nothing a card shows has changed.
+  const signature = JSON.stringify([board.cards, board.comments, board.today, draft?.card, project])
+  if (signature === drawn) return
+  drawn = signature
+
+  drawFilters()
+  const shown = [...goneCards(), ...board.cards].filter(card => !project || projectsOf(card).includes(project))
+  const scrolled = [...main.querySelectorAll('.column > ul')].map(list => list.scrollTop)
+  main.replaceChildren(...board.states.map(state => column(state, shown.filter(card => card.state === state))))
+  main.querySelectorAll('.column > ul').forEach((list, index) => { list.scrollTop = scrolled[index] ?? 0 })
+  const field = main.querySelector('.composer textarea')
+  if (field) {
+    field.focus()
+    field.setSelectionRange(field.value.length, field.value.length)
+    field.form.scrollIntoView({ block: 'nearest' })
+  }
+  for (const button of filters.children) button.setAttribute('aria-pressed', String(button.dataset.project === project))
+  heading.textContent = `${board.owner}'s board`
+  document.title = `(${shown.filter(card => card.state === 'needs-you').length}) Board`
+}
+
+function showProblems() {
+  const lines = [...(board?.errors ?? []), serverProblem].filter(Boolean)
+  problem.textContent = lines.join('\n')
+  problem.hidden = lines.length === 0
+}
+
+async function load() {
+  const response = await fetch('api/board', { cache: 'no-store' }).catch(() => null)
+  const answer = response ? await response.json().catch(() => null) : null
+  if (!response?.ok || !answer) {
+    const stopped = board ? ' The cards below are the last good copy.' : ''
+    serverProblem = answer?.error ?? `The board server is not answering. Start it with \`yourmove serve\`.${stopped}`
+    showProblems()
+    return
+  }
+  board = answer
+  serverProblem = ''
+  const now = new Date()
+  const day = now.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })
+  checked.textContent = `${day}, checked ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+  showProblems()
+  draw()
+}
+
+addEventListener('hashchange', draw)
+document.addEventListener('visibilitychange', () => { if (!document.hidden) load() })
+setInterval(load, RELOAD_MS)
+load()
+</script>
+</body>
+</html>

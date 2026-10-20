@@ -1,0 +1,134 @@
+"""Serves the board page on localhost, saves the owner's comments, and keeps PR states in sync."""
+
+from __future__ import annotations
+
+import contextlib
+import json
+import threading
+import time
+from datetime import date
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+from typing import Any
+
+from . import board as boards
+from . import comments as notes
+from . import github
+from .board import Board, BoardError
+
+PAGE = Path(__file__).with_name("board.html")
+MAX_BODY_BYTES = 8192
+SYNC_MINUTES = 10
+ICON = (
+    b"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'>"
+    b"<rect x='1' y='2' width='4' height='12' rx='1' fill='#c2410c'/>"
+    b"<rect x='6' y='2' width='4' height='8' rx='1' fill='#888'/>"
+    b"<rect x='11' y='2' width='4' height='5' rx='1' fill='#888'/></svg>"
+)
+
+
+def snapshot(board: Board) -> dict[str, Any]:
+    """Everything the page draws. Cards are validated here, so the page and lint never disagree."""
+    cards = boards.read(board)
+    return {
+        "owner": board.owner,
+        "today": date.today().isoformat(),
+        "states": boards.STATES,
+        "staleAfterDays": boards.STALE_AFTER_DAYS,
+        "projects": {key: vars(project) for key, project in board.projects.items()},
+        "cards": cards.cards,
+        "errors": [problem.message for problem in cards.errors],
+        "comments": notes.load(board),
+    }
+
+
+def handler_for(directory: Path, port: int) -> type[BaseHTTPRequestHandler]:
+    own_hosts = {f"localhost:{port}", f"127.0.0.1:{port}"}
+    own_origins = {f"http://{host}" for host in own_hosts}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            path = self.path.split("?")[0]
+            if self.headers.get("Host") not in own_hosts:
+                self.send_error(404)
+            elif path == "/":
+                self.respond(200, "text/html; charset=utf-8", PAGE.read_bytes())
+            elif path == "/favicon.svg":
+                self.respond(200, "image/svg+xml", ICON)
+            elif path == "/api/board":
+                # Loaded per request, so an edit to the config shows without a restart.
+                try:
+                    self.respond_json(200, snapshot(boards.load(directory)))
+                except BoardError as error:
+                    self.respond_json(500, {"error": str(error)})
+            else:
+                self.send_error(404)
+
+        def do_POST(self) -> None:
+            if self.path != "/api/comments" or not self.is_from_the_page():
+                self.send_error(403)
+                return
+            if self.headers.get("Content-Type") != "application/json":
+                self.send_error(415)
+                return
+            length = int(self.headers.get("Content-Length", 0))
+            if not 0 < length <= MAX_BODY_BYTES:
+                self.send_error(413)
+                return
+            board = boards.load(directory)
+            try:
+                body = json.loads(self.rfile.read(length))
+                card = boards.read(board).find(str(body["card"]))
+                comments = notes.add(board, card, str(body["text"]))
+            except (ValueError, KeyError, TypeError, BoardError):
+                self.send_error(400)
+                return
+            self.respond_json(201, comments)
+
+        def do_DELETE(self) -> None:
+            if not self.path.startswith("/api/comments/") or not self.is_from_the_page():
+                self.send_error(403)
+                return
+            self.respond_json(200, notes.remove(boards.load(directory), self.path.removeprefix("/api/comments/")))
+
+        # A comment reaches Claude sessions as the owner's own words, so only this page may write one.
+        # Host stops DNS rebinding. Origin stops another site posting here from the owner's browser.
+        def is_from_the_page(self) -> bool:
+            return self.headers.get("Host") in own_hosts and self.headers.get("Origin") in own_origins
+
+        def respond_json(self, status: int, value: Any) -> None:
+            self.respond(status, "application/json", json.dumps(value, ensure_ascii=False).encode())
+
+        def respond(self, status: int, content_type: str, body: bytes) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        # The page polls. Only writes and errors are worth a log line.
+        def log_request(self, code: Any = "-", size: Any = "-") -> None:
+            if self.command != "GET":
+                super().log_request(code, size)
+
+    return Handler
+
+
+def keep_in_sync(directory: Path) -> None:
+    while True:
+        try:
+            board = boards.load(directory)
+            for move in github.apply(board, github.plan(board)[0]):
+                print(f"sync: {move.card['id']} {move.card['state']} -> {move.to} ({move.why})", flush=True)
+        except BoardError as error:
+            print(f"sync: {error}", flush=True)
+        time.sleep(SYNC_MINUTES * 60)
+
+
+def serve(board: Board, port: int) -> None:
+    if github.available():
+        threading.Thread(target=keep_in_sync, args=(board.dir,), daemon=True).start()
+    print(f"The board is on http://127.0.0.1:{port}/ (Ctrl-C to stop).", flush=True)
+    with contextlib.suppress(KeyboardInterrupt):
+        HTTPServer(("127.0.0.1", port), handler_for(board.dir, port)).serve_forever()
