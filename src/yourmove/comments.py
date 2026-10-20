@@ -10,6 +10,7 @@ import secrets
 from typing import Any
 
 from . import board as boards
+from . import user
 from .board import Board, BoardError, Card, Cards
 from .git import Worktree
 
@@ -18,12 +19,15 @@ MAX_TEXT = 2000
 
 
 def load(board: Board) -> list[Comment]:
+    """The comments this machine's board server signed. Anything else in the file is dropped."""
     comments = []
     for text in boards.read_lines(board.path(boards.COMMENTS_FILE)):
         try:
-            comments.append(json.loads(text))
+            comment = json.loads(text)
         except json.JSONDecodeError:
             continue
+        if isinstance(comment, dict) and user.is_signed(comment):
+            comments.append(comment)
     return comments
 
 
@@ -45,6 +49,7 @@ def add(board: Board, card: Card, text: str) -> list[Comment]:
         "text": text,
         "at": boards.now(),
     }
+    comment["sig"] = user.signature(comment)
     with boards.locked(board):
         comments = [*load(board), comment]
         save(board, comments)

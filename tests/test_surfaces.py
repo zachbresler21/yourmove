@@ -16,7 +16,7 @@ from unittest import mock
 
 from support import LONG_AGO, TODAY, BoardCase, card
 from yourmove import board as boards
-from yourmove import cli, github, server
+from yourmove import cli, github, server, user
 
 
 class Sync(BoardCase):
@@ -208,9 +208,16 @@ class CommandLine(BoardCase):
                 self.assertEqual(cli.main(["--board", str(target), "init", "--owner", "Ada"]), 0)
         made = boards.load(target)
         self.assertEqual((made.owner, made.projects["shop"].repo), ("Ada", "acme/shop"))
+        self.assertTrue(user.is_trusted(target))
         self.assertEqual(cli.main(["--board", str(target), "init"]), 1)
 
+    def test_trust_lets_the_hooks_use_a_board(self) -> None:
+        self.assertFalse(user.is_trusted(self.dir))
+        self.assertEqual(self.cli("trust")[0], 0)
+        self.assertTrue(user.is_trusted(self.dir))
+
     def test_the_hook_command_reads_its_payload_from_stdin(self) -> None:
+        user.trust(self.dir)
         main = self.repo("shop", "acme/shop")
         payload = io.StringIO(json.dumps({"cwd": str(main), "session_id": "s"}))
         out = io.StringIO()

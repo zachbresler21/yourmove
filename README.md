@@ -50,7 +50,8 @@ their working directory, the way git finds `.git`. Put it at the root of one rep
 folder above all your repos for one board across all of them:
 
 ```sh
-cd ~/code && yourmove init     # writes .yourmove/yourmove.json with this repo as a project
+cd ~/code && yourmove init     # writes .yourmove/yourmove.json with this repo as a project, and trusts it
+yourmove trust                 # instead of init, for a board that already exists
 yourmove serve                 # http://127.0.0.1:47600/
 yourmove autostart             # macOS: serve it from login on
 ```
@@ -145,12 +146,22 @@ Every add, move and removal made through the command, or by sync, is appended to
 
 ## Security
 
-A comment reaches your sessions as your own words, so the server only accepts one from its own
-page: it listens on 127.0.0.1 only, checks `Host` to stop DNS rebinding, and checks `Origin` so
-another site cannot post from your browser. Anything that can write `.yourmove/` directly can
-speak as you, the same as anything that can write your `CLAUDE.md`.
+A comment reaches your sessions as your own words, so three things guard who can write one.
 
-`RULES.md` goes into every session's context. Treat it like a `CLAUDE.md`.
+- **Only boards you trust get a voice.** Any repo can ship a `.yourmove/` folder, and the plugin
+  runs in every session. The hooks ignore a board until you trust it on your machine: `yourmove init`
+  trusts the board it makes, and `yourmove trust` trusts one that already exists. The list is in
+  `~/.config/yourmove/trusted-boards`, outside every repo.
+- **Only your server can sign a comment.** The board server signs each comment with a key that
+  lives in `~/.config/yourmove/comment-key`, readable by you alone. A comment that is unsigned or
+  edited after signing is dropped, so a teammate who commits to a shared board's `comments.jsonl`
+  cannot speak as you.
+- **Only the board page can post.** The server listens on 127.0.0.1 only, checks `Host` to stop
+  DNS rebinding, and checks `Origin` so another site cannot post from your browser.
+
+`RULES.md` goes into every session's context, so trust a board's `RULES.md` the way you trust a
+repo's `CLAUDE.md`. Session state for the drift check lives in your home directory, never a
+shared `/tmp`.
 
 The board is plain text on disk. Keep secrets and user data off it.
 

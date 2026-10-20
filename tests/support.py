@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -8,6 +9,7 @@ from collections.abc import Sequence
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from yourmove import board as boards
 
@@ -37,6 +39,12 @@ class BoardCase(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
+        # Trust, the comment key and session state are per user. Keep each test's in its own folder.
+        env = {"XDG_CONFIG_HOME": str(self.root / "config"), "XDG_STATE_HOME": str(self.root / "state")}
+        patcher = mock.patch.dict(os.environ, env)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.environ.pop("CLAUDE_PLUGIN_DATA", None)
         self.dir = self.root / boards.DIR_NAME
         self.dir.mkdir()
         (self.dir / boards.CONFIG_FILE).write_text(json.dumps(CONFIG))

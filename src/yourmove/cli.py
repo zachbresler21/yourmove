@@ -11,7 +11,7 @@ from typing import Any
 
 from . import board as boards
 from . import comments as notes
-from . import git, github, hooks
+from . import git, github, hooks, user
 from .board import STATES, Board, BoardError, Card
 
 
@@ -72,6 +72,13 @@ def build_parser() -> argparse.ArgumentParser:
     reply = command("reply", run_reply, "Record your answer to a comment, so it shows on the card.")
     reply.add_argument("comment")
     reply.add_argument("text")
+
+    command(
+        "trust",
+        run_trust,
+        "Let the Claude Code hooks use this board. Only for a board you control: "
+        "its comments and RULES.md reach your sessions.",
+    )
 
     command("lint", run_lint, "Check every card. Exits 1 if a card cannot be shown.")
 
@@ -145,6 +152,7 @@ def run_init(args: argparse.Namespace) -> int:
     directory.mkdir(parents=True)
     (directory / boards.CONFIG_FILE).write_text(json.dumps(config, indent=2) + "\n")
     (directory / boards.CARDS_FILE).touch()
+    user.trust(directory)
     print(f"Made a board in {directory}, owned by {owner}, with the project {key} ({repo}).")
     print(f"Add your other projects to {directory / boards.CONFIG_FILE}. Then `yourmove serve` to see it.")
     return 0
@@ -227,6 +235,13 @@ def run_rm(args: argparse.Namespace) -> int:
 def run_reply(args: argparse.Namespace) -> int:
     comment = notes.reply(board_for(args), args.comment, args.text)
     print(f'Reply saved on "{comment["title"]}".')
+    return 0
+
+
+def run_trust(args: argparse.Namespace) -> int:
+    board = board_for(args)
+    user.trust(board.dir)
+    print(f"Trusted {board.dir.resolve()}. Claude Code sessions below it are now briefed from it.")
     return 0
 
 

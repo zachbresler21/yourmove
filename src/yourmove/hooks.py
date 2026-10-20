@@ -7,9 +7,7 @@ and most repos a person opens have nothing to do with it.
 from __future__ import annotations
 
 import json
-import os
 import re
-import tempfile
 import time
 from collections.abc import Iterator
 from datetime import date
@@ -18,7 +16,7 @@ from typing import Any
 
 from . import board as boards
 from . import comments as notes
-from . import git
+from . import git, user
 from .board import Board, Card, Cards
 from .github import MERGED_FROM
 
@@ -51,6 +49,9 @@ def run(event: str, payload: dict[str, Any]) -> str:
 def locate(cwd: Path) -> tuple[Board, git.Worktree, Cards] | None:
     directory = boards.nearest(cwd)
     if directory is None:
+        return None
+    # A repo can ship a .yourmove folder of its own. Only boards this user made or trusted get a voice.
+    if not user.is_trusted(directory):
         return None
     board = boards.load(directory)
     worktree = git.current(cwd)
@@ -108,7 +109,7 @@ def briefing(board: Board, worktree: git.Worktree, cards: Cards, session: str) -
     ]
     rules = board.rules()
     if rules:
-        lines += ["", f"{owner}'s rules for this board:", rules]
+        lines += ["", "The board's RULES.md:", rules]
 
     delivered = comment_text(board, notes.deliver(board, worktree, session, cards))
     if delivered:
@@ -240,8 +241,7 @@ def bash_commands(transcript: Path, since: str) -> Iterator[str]:
 
 
 def sessions_dir() -> Path:
-    # Plugin data survives plugin updates. Outside a plugin, the temp dir is fine: this is per session.
-    return Path(os.environ.get("CLAUDE_PLUGIN_DATA") or Path(tempfile.gettempdir()) / "yourmove") / "sessions"
+    return user.state_dir() / "sessions"
 
 
 def state_file(session: str) -> Path:
@@ -251,7 +251,7 @@ def state_file(session: str) -> Path:
 def remember(session: str, worktree: git.Worktree, cards: Cards, asked_for_card: bool = False) -> None:
     """What the board and the worktree looked like at the last stop, to see what this turn changed."""
     file = state_file(session)
-    file.parent.mkdir(parents=True, exist_ok=True)
+    user.private_dir(file.parent)
     snapshot = {
         # UTC with no zone suffix, so it compares as text against transcript timestamps.
         "at": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()),
