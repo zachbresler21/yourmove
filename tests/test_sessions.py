@@ -147,8 +147,14 @@ class Trust(HookCase):
     def test_a_damaged_key_is_refused_rather_than_used(self) -> None:
         user.key()
         (self.root / "config" / "yourmove" / "comment-key").write_text("")
-        with self.assertRaisesRegex(boards.BoardError, "not a yourmove comment key"):
+        with self.assertRaisesRegex(boards.BoardError, "not a yourmove secret"):
             user.key()
+
+    def test_the_server_token_is_kept_and_readable_by_this_user_only(self) -> None:
+        token = user.server_token()
+        self.assertEqual(user.server_token(), token)
+        self.assertNotEqual(token.encode(), user.key())
+        self.assertEqual((self.root / "config" / "yourmove" / "server-token").stat().st_mode & 0o777, 0o600)
 
     def test_concurrent_first_use_agrees_on_one_key(self) -> None:
         keys: list[bytes] = []
@@ -192,6 +198,16 @@ class SessionStart(HookCase):
         self.assertNotIn("Post", brief)
         self.assertIn("Ada has 1 card(s) in needs-you", brief)
         self.assertIn("The board's RULES.md:\nOnly Ada's work gets a card.", brief)
+
+    def test_the_briefing_names_the_ticket_and_where_to_put_it(self) -> None:
+        config = json.loads((self.dir / boards.CONFIG_FILE).read_text())
+        (self.dir / boards.CONFIG_FILE).write_text(
+            json.dumps({**config, "tickets": "https://linear.app/acme/issue/{id}"})
+        )
+        self.write_cards(card(where="checkout", ticket="SHOP-142"))
+        brief = self.hook("session-start", self.checkout)
+        self.assertIn("Ticket: SHOP-142 (https://linear.app/acme/issue/SHOP-142)", brief)
+        self.assertIn("Put SHOP-142 in the branch name and the PR title", brief)
 
     def test_a_worktree_with_no_card_is_told_how_to_add_one(self) -> None:
         self.assertIn("No card names this worktree", self.hook("session-start", self.checkout))

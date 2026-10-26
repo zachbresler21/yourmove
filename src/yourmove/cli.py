@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import html
 import json
+import os
 import sys
+import webbrowser
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -12,7 +15,7 @@ from typing import Any
 from . import board as boards
 from . import comments as notes
 from . import git, github, hooks, user
-from .board import STATES, Board, BoardError, Card
+from .board import PORT, STATES, Board, BoardError, Card
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -60,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     set_.add_argument("--title")
     set_.add_argument("--next")
     set_.add_argument("--project", action="append")
-    set_.add_argument("--clear", action="append", default=[], choices=("pr", "where", "waiting", "choices"))
+    set_.add_argument("--clear", action="append", default=[], choices=("pr", "ticket", "where", "waiting", "choices"))
     add_card_fields(set_)
 
     touch = command("touch", run_touch, "Mark a card checked today: it still holds.")
@@ -89,9 +92,13 @@ def build_parser() -> argparse.ArgumentParser:
     log.add_argument("--days", type=int, default=7)
 
     serve = command("serve", run_serve, "Serve the board page on localhost.")
-    serve.add_argument("--port", type=int, default=47600)
+    serve.add_argument("--port", type=int, default=PORT)
 
-    command("autostart", run_autostart, "macOS: keep the board page served from login on.")
+    open_ = command("open", run_open, "Open the board page in your browser, with the link that lets it in.")
+    open_.add_argument("--port", type=int, default=PORT)
+
+    autostart = command("autostart", run_autostart, "macOS: keep the board page served from login on.")
+    autostart.add_argument("--port", type=int, default=PORT)
 
     hook = command("hook", run_hook, "Run a Claude Code hook. Reads the hook's JSON on stdin.")
     hook.add_argument("event", choices=("session-start", "prompt", "stop"))
@@ -100,6 +107,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def add_card_fields(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--pr", type=int, action="append", help="a PR number; repeat for several")
+    parser.add_argument("--ticket", help="the work's ticket ID in the team's tracker, like SUN-142")
     parser.add_argument("--where", help="the worktree folder the work happens in")
     parser.add_argument("--here", action="store_true", help="the worktree you are in")
     parser.add_argument("--waiting", help="who the work waits on, when it is not the owner")
@@ -114,7 +122,7 @@ def card_fields(args: argparse.Namespace) -> dict[str, Any]:
     fields: dict[str, Any] = {}
     if args.project:
         fields["project"] = args.project[0] if len(args.project) == 1 else args.project
-    for field in ("state", "title", "next", "waiting"):
+    for field in ("state", "title", "next", "ticket", "waiting"):
         if getattr(args, field, None) is not None:
             fields[field] = getattr(args, field)
     if args.pr:
@@ -153,11 +161,19 @@ def run_init(args: argparse.Namespace) -> int:
     directory.mkdir(parents=True)
     (directory / boards.CONFIG_FILE).write_text(json.dumps({"owner": owner, "projects": projects}, indent=2) + "\n")
     (directory / boards.CARDS_FILE).touch()
+    (directory / ".gitignore").write_text(GITIGNORE)
     user.trust(directory)
     print(f"Made a board in {directory}, owned by {owner}, with {len(projects)} project(s): {', '.join(projects)}.")
-    print(f"Rename or add projects in {directory / boards.CONFIG_FILE}. Then `yourmove serve` to see it.")
+    print(f"Rename or add projects in {directory / boards.CONFIG_FILE}.")
+    print("Then `yourmove serve`, and `yourmove open` to see it.")
     return 0
 
+
+# Committing a board is fine. These are this machine's alone.
+GITIGNORE = """server.log
+.lock/
+.*.tmp
+"""
 
 PROJECT_COLORS = ("#3b82d6", "#1f9d63", "#e0674c", "#d99a00", "#7c4dcc", "#0e9aa7", "#c2410c", "#64748b")
 
@@ -201,6 +217,8 @@ def run_ls(args: argparse.Namespace) -> int:
 def facts(card: Card) -> str:
     parts = [",".join(boards.projects_of(card))]
     parts += [f"#{pr}" for pr in boards.prs_of(card)]
+    if card.get("ticket"):
+        parts.append(card["ticket"])
     if card.get("where"):
         parts.append(card["where"])
     if card.get("waiting"):
@@ -313,7 +331,22 @@ def run_serve(args: argparse.Namespace) -> int:
 def run_autostart(args: argparse.Namespace) -> int:
     from . import autostart
 
-    print(autostart.install(board_for(args)))
+    print(autostart.install(board_for(args), args.port))
+    return 0
+
+
+def run_open(args: argparse.Namespace) -> int:
+    # Every account on a machine can read a command line, so the browser is never handed the token in one.
+    # It opens a file only this user can read, which forwards to the link, the way Jupyter does.
+    url = html.escape(f"http://127.0.0.1:{args.port}/?token={user.server_token()}")
+    forward = user.private_dir(user.config_dir()) / "open.html"
+    descriptor = os.open(forward, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w") as file:
+        file.write(
+            f'<!doctype html><meta http-equiv="refresh" content="0;url={url}"><a href="{url}">Open the board</a>\n'
+        )
+    webbrowser.open(forward.as_uri())
+    print(f"Opened the board on port {args.port}. With no browser here, the link is in {forward}.")
     return 0
 
 

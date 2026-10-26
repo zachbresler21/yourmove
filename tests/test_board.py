@@ -36,6 +36,7 @@ class ReadingCards(BoardCase):
             "lowercase-with-hyphens": card(id="Shop Checkout"),
             '"choices"': card(choices="yes"),
             'needs a "next"': card(next="  "),
+            "not a ticket ID": card(ticket="SHOP 142"),
         }
         for expected, bad in cases.items():
             with self.subTest(expected):
@@ -73,6 +74,18 @@ class FindingTheBoard(BoardCase):
     def test_no_board_says_how_to_make_one(self) -> None:
         with self.assertRaisesRegex(BoardError, "yourmove init"):
             boards.find(self.root.parent)
+
+    def test_a_tickets_link_needs_https_and_a_place_for_the_id(self) -> None:
+        config = json.loads((self.dir / boards.CONFIG_FILE).read_text())
+        for bad in ("https://linear.app/acme/issue/", "javascript:alert('{id}')", 7):
+            with self.subTest(bad):
+                (self.dir / boards.CONFIG_FILE).write_text(json.dumps({**config, "tickets": bad}))
+                with self.assertRaisesRegex(BoardError, "tickets"):
+                    boards.load(self.dir)
+        (self.dir / boards.CONFIG_FILE).write_text(
+            json.dumps({**config, "tickets": "https://linear.app/acme/issue/{id}"})
+        )
+        self.assertEqual(boards.load(self.dir).ticket_link("SHOP-1"), "https://linear.app/acme/issue/SHOP-1")
 
     def test_a_config_without_projects_is_refused(self) -> None:
         (self.dir / boards.CONFIG_FILE).write_text(json.dumps({"owner": "Ada", "projects": {}}))

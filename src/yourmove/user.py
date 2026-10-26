@@ -60,26 +60,34 @@ def trust(board_dir: Path) -> None:
 
 
 def key() -> bytes:
-    """This machine's comment key, made on first use and readable by this user only."""
-    path = private_dir(config_dir()) / "comment-key"
+    """The key that signs comments. Replacing it unsigns every comment signed before."""
+    return secret("comment-key")
+
+
+def server_token() -> str:
+    """What the board page sends with every request, so other accounts on this machine cannot use the server."""
+    return secret("server-token").decode()
+
+
+def secret(name: str) -> bytes:
+    """A random secret in the config folder, made on first use and readable by this user only."""
+    path = private_dir(config_dir()) / name
     if not path.exists():
-        # Written whole beside the key, then linked into place, so a reader finds no key or all of one.
-        temp = path.with_name(f".comment-key.{os.getpid()}.{secrets.token_hex(4)}")
+        # Written whole beside the secret, then linked into place, so a reader finds none or all of one.
+        temp = path.with_name(f".{name}.{os.getpid()}.{secrets.token_hex(4)}")
         descriptor = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "wb") as file:
             file.write(secrets.token_hex(32).encode())
         try:
             os.link(temp, path)
         except FileExistsError:
-            pass  # Another process linked its key first. That one is the key.
+            pass  # Another process linked its secret first. That one is the secret.
         finally:
             temp.unlink()
     made = path.read_bytes()
-    # A short or empty key would let anyone forge a comment, so never sign or check with one.
+    # A short or empty secret would let anyone forge a comment or use the server, so never use one.
     if not re.fullmatch(rb"[0-9a-f]{64}", made):
-        raise BoardError(
-            f"{path} is not a yourmove comment key. Delete it to make a new one; comments signed with it are lost."
-        )
+        raise BoardError(f"{path} is not a yourmove secret. Delete it and yourmove makes a new one.")
     return made
 
 

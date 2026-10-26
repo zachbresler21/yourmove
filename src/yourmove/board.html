@@ -224,6 +224,7 @@ const COLUMNS = {
   live: ['Live', 'Shipped or running'],
 }
 const RELOAD_MS = 10000
+const TOKEN_KEY = 'yourmove-token'
 const GONE = 'This card was renamed or removed. Its comments are still here.'
 
 const main = document.getElementById('board')
@@ -237,7 +238,23 @@ let draft = null // { card, text } while a comment is being written
 let serverProblem = ''
 let drawn = ''
 
+const token = rememberToken()
+
 const projectsOf = card => [].concat(card.project ?? [])
+
+// The server answers only requests that carry its token. The link from `yourmove open` brings it
+// once; the page keeps it, so a bookmark of the plain address works afterwards.
+function rememberToken() {
+  const given = new URLSearchParams(location.search).get('token')
+  if (given) history.replaceState(null, '', location.pathname + location.hash)
+  // A browser can block storage for the site. The token from the link still works for this visit.
+  try {
+    if (given) localStorage.setItem(TOKEN_KEY, given)
+    return given ?? localStorage.getItem(TOKEN_KEY) ?? ''
+  } catch {
+    return given ?? ''
+  }
+}
 
 function el(tag, className, text) {
   const node = document.createElement(tag)
@@ -280,6 +297,7 @@ function cardItem(card) {
     link.setAttribute('aria-label', `Pull request ${number}`)
     meta.append(link)
   }
+  if (card.ticket) meta.append(ticket(card.ticket))
   if (card.where) meta.append(el('code', '', card.where))
   if (card.waiting) meta.append(el('span', 'waiting', `Waiting on ${card.waiting}`))
   const writing = draft?.card === card.id
@@ -307,6 +325,17 @@ function cardItem(card) {
   }
   if (writing) item.append(composer(card))
   return item
+}
+
+function ticket(id) {
+  const href = board.ticketLinks[id]
+  if (!href) return el('span', '', id)
+  const link = el('a', '', id)
+  link.href = href
+  link.target = '_blank'
+  link.rel = 'noopener'
+  link.setAttribute('aria-label', `Ticket ${id}`)
+  return link
 }
 
 // The answers a session offered on a needs-you card. One press sends it, the same as a typed comment.
@@ -375,7 +404,7 @@ function composer(card) {
 async function send(method, path, body) {
   const response = await fetch(path, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
+    headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
     body: body && JSON.stringify(body),
   }).catch(() => null)
   serverProblem = response?.ok ? '' : 'That did not save. Is `yourmove serve` still running?'
@@ -450,7 +479,7 @@ function showProblems() {
 }
 
 async function load() {
-  const response = await fetch('api/board', { cache: 'no-store' }).catch(() => null)
+  const response = await fetch('api/board', { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } }).catch(() => null)
   const answer = response ? await response.json().catch(() => null) : null
   if (!response?.ok || !answer) {
     const stopped = board ? ' The cards below are the last good copy.' : ''

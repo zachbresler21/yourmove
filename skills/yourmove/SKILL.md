@@ -33,10 +33,19 @@ reads it and does not ask you.
 - **You checked a card and it still holds:** `yourmove touch <id>`. A card untouched for five days shows as stale.
 - **The work was dropped, or has been live a week:** `yourmove rm <id>`.
 - **The owner commented on a card:** answer in your reply, then `yourmove reply <comment id> "<what you did>"`.
+- **The work has a ticket in the team's tracker** (Linear, Jira): record it with `--ticket SUN-142`.
 
 Touch only your own cards. Other sessions own theirs, and the session-start briefing tells you
 which work is in flight elsewhere. The board syncs PR states from GitHub on its own, but it
 cannot write `next` for you.
+
+## Tickets
+
+The board is the owner's. The team's tracker is everyone's, and it keeps itself in step with
+GitHub: a PR whose branch name or title holds the ticket ID gets linked to the ticket, and the
+tracker moves the ticket when the PR opens and merges. So when a card has a ticket, put its ID in
+the branch name (`sun-142-gift-cards`) and the PR title (`SUN-142: Gift cards`). Never move the
+ticket by hand to match the board.
 
 ## Writing `next`
 
@@ -67,8 +76,8 @@ Write each choice as a reply the owner would type, so it reads as an instruction
 ```sh
 yourmove ls [--state S] [--project P]   # the board, column by column
 yourmove show <id>                      # one card, its choices and comments
-yourmove add --project P --title T --next N [--state S] [--here] [--pr N] [--first]
-yourmove set <id> [--state S] [--next N] [--title T] [--pr N] [--here] [--waiting W] [--choice C] [--clear FIELD]
+yourmove add --project P --title T --next N [--state S] [--here] [--pr N] [--ticket T] [--first]
+yourmove set <id> [--state S] [--next N] [--title T] [--pr N] [--ticket T] [--here] [--waiting W] [--choice C] [--clear FIELD]
 yourmove touch <id> | rm <id>
 yourmove reply <comment id> "<text>"
 yourmove lint                            # after editing cards.jsonl by hand
