@@ -109,7 +109,7 @@ class Server(BoardCase):
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
             self.port = probe.getsockname()[1]
-        handler = server.handler_for(self.dir, self.port, user.server_token())
+        handler = server.handler_for(self.dir, self.port, user.new_server_token(self.port))
         handler.log_message = lambda *args: None  # type: ignore[method-assign]
         httpd = HTTPServer(("127.0.0.1", self.port), handler)
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
@@ -125,7 +125,7 @@ class Server(BoardCase):
         if body is not None:
             request.add_header("Content-Type", "application/json")
         if token:
-            request.add_header("Authorization", f"Bearer {user.server_token() if token == 'own' else token}")
+            request.add_header("Authorization", f"Bearer {user.server_token(self.port) if token == 'own' else token}")
         if origin:
             request.add_header("Origin", f"http://127.0.0.1:{self.port}" if origin == "own" else origin)
         try:
@@ -176,6 +176,40 @@ class Server(BoardCase):
             )
             self.assertEqual(self.call("DELETE", "/api/comments/abc", token=token)[0], 403)
         self.assertEqual(boards.read_lines(self.dir / boards.COMMENTS_FILE), [])
+
+    def test_open_hands_the_browser_the_token_through_a_private_file_never_a_command_line(self) -> None:
+        out = io.StringIO()
+        with mock.patch("webbrowser.open") as browser, contextlib.redirect_stdout(out):
+            self.assertEqual(cli.main(["--board", str(self.dir), "open", "--port", str(self.port)]), 0)
+        forward = self.root / "config" / "yourmove" / "open.html"
+        browser.assert_called_once_with(forward.as_uri())
+        token = user.server_token(self.port)
+        self.assertIn(f"http://127.0.0.1:{self.port}/?token={token}", forward.read_text())
+        self.assertEqual(forward.stat().st_mode & 0o777, 0o600)
+        self.assertNotIn(token, out.getvalue())
+
+    def test_open_hands_nothing_to_a_server_that_cannot_prove_it_holds_the_token(self) -> None:
+        # Another account's server on the port, as when it took the port while the owner's was down.
+        user.new_server_token(self.port)
+        err = io.StringIO()
+        with mock.patch("webbrowser.open") as browser, contextlib.redirect_stderr(err):
+            self.assertEqual(cli.main(["--board", str(self.dir), "open", "--port", str(self.port)]), 1)
+        browser.assert_not_called()
+        self.assertIn("not running on port", err.getvalue())
+        self.assertFalse((self.root / "config" / "yourmove" / "open.html").exists())
+
+    def test_open_with_nothing_on_the_port_says_to_start_the_server(self) -> None:
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            free = probe.getsockname()[1]
+        err = io.StringIO()
+        with mock.patch("webbrowser.open") as browser, contextlib.redirect_stderr(err):
+            self.assertEqual(cli.main(["--board", str(self.dir), "open", "--port", str(free)]), 1)
+        browser.assert_not_called()
+        self.assertIn("yourmove serve", err.getvalue())
+
+    def test_a_bad_challenge_gets_no_proof(self) -> None:
+        self.assertEqual(self.call("GET", "/api/proof?challenge=short", token=None)[0], 400)
 
     def test_the_page_itself_needs_no_token_since_it_holds_no_data(self) -> None:
         self.assertEqual(self.call("GET", "/", token=None)[0], 200)
@@ -245,16 +279,6 @@ class CommandLine(BoardCase):
         code, output = self.cli("set", "shop-checkout", "--ticket", "not a ticket")
         self.assertEqual(code, 1)
         self.assertIn("not a ticket ID", output)
-
-    def test_open_hands_the_browser_the_token_through_a_private_file_never_a_command_line(self) -> None:
-        with mock.patch("webbrowser.open") as browser:
-            code, output = self.cli("open", "--port", "47611")
-        self.assertEqual(code, 0)
-        forward = self.root / "config" / "yourmove" / "open.html"
-        browser.assert_called_once_with(forward.as_uri())
-        self.assertIn(f"http://127.0.0.1:47611/?token={user.server_token()}", forward.read_text())
-        self.assertEqual(forward.stat().st_mode & 0o777, 0o600)
-        self.assertNotIn(user.server_token(), output)
 
     def test_touch_and_log(self) -> None:
         self.write_cards(card(updated=LONG_AGO))

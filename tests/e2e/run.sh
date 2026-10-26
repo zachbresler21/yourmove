@@ -44,7 +44,7 @@ cd "$ROOT"
 "$YOURMOVE" serve --port "$PORT" >"$ROOT/server.log" 2>&1 &
 server=$!
 for _ in $(seq 50); do curl -sf "$URL" >/dev/null && break; sleep 0.2; done
-LINK="${URL}?token=$(cat "$XDG_CONFIG_HOME/yourmove/server-token")"
+LINK="${URL}?token=$(cat "$XDG_CONFIG_HOME/yourmove/server-token-$PORT")"
 
 node "$HERE/page.mjs" "$CHROME" "$URL" "$SHOTS" locked
 node "$HERE/page.mjs" "$CHROME" "$LINK" "$SHOTS" comment
@@ -68,7 +68,7 @@ wait "$server" 2>/dev/null || true
 server=""
 wait "$page"
 
-TOKEN=$(cat "$XDG_CONFIG_HOME/yourmove/server-token")
+TOKEN=$(cat "$XDG_CONFIG_HOME/yourmove/server-token-$PORT")
 grep -q "$TOKEN" "$ROOT/server.log" && fail "the server log holds the token" || pass "the server log never holds the token"
 
 echo "All passed."

@@ -150,11 +150,13 @@ class Trust(HookCase):
         with self.assertRaisesRegex(boards.BoardError, "not a yourmove secret"):
             user.key()
 
-    def test_the_server_token_is_kept_and_readable_by_this_user_only(self) -> None:
-        token = user.server_token()
-        self.assertEqual(user.server_token(), token)
+    def test_the_server_token_is_per_port_private_and_new_each_time_the_server_starts(self) -> None:
+        token = user.new_server_token(47600)
+        self.assertEqual(user.server_token(47600), token)
+        self.assertNotEqual(user.server_token(47601), token)
         self.assertNotEqual(token.encode(), user.key())
-        self.assertEqual((self.root / "config" / "yourmove" / "server-token").stat().st_mode & 0o777, 0o600)
+        self.assertEqual((self.root / "config" / "yourmove" / "server-token-47600").stat().st_mode & 0o777, 0o600)
+        self.assertNotEqual(user.new_server_token(47600), token)
 
     def test_concurrent_first_use_agrees_on_one_key(self) -> None:
         keys: list[bytes] = []

@@ -336,9 +336,18 @@ def run_autostart(args: argparse.Namespace) -> int:
 
 
 def run_open(args: argparse.Namespace) -> int:
+    from . import server
+
+    token = user.server_token(args.port)
+    # Another account could be listening on the port while the owner's server is down.
+    if not server.is_owners_server(args.port, token):
+        raise BoardError(
+            f"Your board server is not running on port {args.port}. Start it with `yourmove serve` "
+            "(or `yourmove autostart`), then open it again."
+        )
     # Every account on a machine can read a command line, so the browser is never handed the token in one.
     # It opens a file only this user can read, which forwards to the link, the way Jupyter does.
-    url = html.escape(f"http://127.0.0.1:{args.port}/?token={user.server_token()}")
+    url = html.escape(f"http://127.0.0.1:{args.port}/?token={token}")
     forward = user.private_dir(user.config_dir()) / "open.html"
     descriptor = os.open(forward, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(descriptor, "w") as file:

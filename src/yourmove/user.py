@@ -64,26 +64,38 @@ def key() -> bytes:
     return secret("comment-key")
 
 
-def server_token() -> str:
+def server_token(port: int) -> str:
     """What the board page sends with every request, so other accounts on this machine cannot use the server."""
-    return secret("server-token").decode()
+    return secret(f"server-token-{port}").decode()
 
 
-def secret(name: str) -> bytes:
+def new_server_token(port: int) -> str:
+    """A fresh token, made each time the server starts.
+
+    Another account can take the port while the server is down and serve a page that reads the
+    token the browser kept. A token from before the server last started is worth nothing.
+    """
+    return secret(f"server-token-{port}", fresh=True).decode()
+
+
+def secret(name: str, fresh: bool = False) -> bytes:
     """A random secret in the config folder, made on first use and readable by this user only."""
     path = private_dir(config_dir()) / name
-    if not path.exists():
-        # Written whole beside the secret, then linked into place, so a reader finds none or all of one.
+    if fresh or not path.exists():
+        # Written whole beside the secret, then moved into place, so a reader finds none or all of one.
         temp = path.with_name(f".{name}.{os.getpid()}.{secrets.token_hex(4)}")
         descriptor = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "wb") as file:
             file.write(secrets.token_hex(32).encode())
         try:
-            os.link(temp, path)
+            if fresh:
+                os.replace(temp, path)
+            else:
+                os.link(temp, path)
         except FileExistsError:
             pass  # Another process linked its secret first. That one is the secret.
         finally:
-            temp.unlink()
+            temp.unlink(missing_ok=True)
     made = path.read_bytes()
     # A short or empty secret would let anyone forge a comment or use the server, so never use one.
     if not re.fullmatch(rb"[0-9a-f]{64}", made):

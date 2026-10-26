@@ -72,7 +72,7 @@ PY
 "$YOURMOVE" --board "$BOARD" serve --port "$PORT" >/dev/null 2>&1 &
 server=$!
 for _ in $(seq 50); do curl -sf "$URL" >/dev/null && break; sleep 0.2; done
-TOKEN=$(cat "$XDG_CONFIG_HOME/yourmove/server-token")
+TOKEN=$(cat "$XDG_CONFIG_HOME/yourmove/server-token-$PORT")
 
 comment=$(curl -sf "${URL}api/comments" -H "Origin: http://127.0.0.1:$PORT" -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" -d '{"card": "app-offline-mode", "text": "Cap the queue at 500 writes."}' |
