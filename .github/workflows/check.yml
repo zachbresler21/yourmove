@@ -4,8 +4,10 @@ jobs:
   test:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # 3.9 is the python3 macOS ships, so it stays. Ubuntu 26.04 has no 3.9 build; 24.04 does.
+        os: [ubuntu-24.04, macos-latest]
         python: ["3.9", "3.13"]
     steps:
       - uses: actions/checkout@v4
