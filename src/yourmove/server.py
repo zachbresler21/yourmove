@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hmac
 import json
 import threading
 import time
@@ -13,7 +14,7 @@ from typing import Any
 
 from . import board as boards
 from . import comments as notes
-from . import github
+from . import github, user
 from .board import Board, BoardError
 
 PAGE = Path(__file__).with_name("board.html")
@@ -36,15 +37,18 @@ def snapshot(board: Board) -> dict[str, Any]:
         "states": boards.STATES,
         "staleAfterDays": boards.STALE_AFTER_DAYS,
         "projects": {key: vars(project) for key, project in board.projects.items()},
+        # Made here, so the page and the briefing never build a ticket link two ways.
+        "ticketLinks": {card["ticket"]: board.ticket_link(card["ticket"]) for card in cards.cards if "ticket" in card},
         "cards": cards.cards,
         "errors": [problem.message for problem in cards.errors],
         "comments": notes.load(board),
     }
 
 
-def handler_for(directory: Path, port: int) -> type[BaseHTTPRequestHandler]:
+def handler_for(directory: Path, port: int, token: str) -> type[BaseHTTPRequestHandler]:
     own_hosts = {f"localhost:{port}", f"127.0.0.1:{port}"}
     own_origins = {f"http://{host}" for host in own_hosts}
+    authorization = f"Bearer {token}".encode()
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
@@ -56,6 +60,9 @@ def handler_for(directory: Path, port: int) -> type[BaseHTTPRequestHandler]:
             elif path == "/favicon.svg":
                 self.respond(200, "image/svg+xml", ICON)
             elif path == "/api/board":
+                if not self.has_token():
+                    self.respond_json(401, {"error": "This page needs the board's link. Run `yourmove open`."})
+                    return
                 # Loaded per request, so an edit to the config shows without a restart.
                 try:
                     self.respond_json(200, snapshot(boards.load(directory)))
@@ -65,7 +72,7 @@ def handler_for(directory: Path, port: int) -> type[BaseHTTPRequestHandler]:
                 self.send_error(404)
 
         def do_POST(self) -> None:
-            if self.path != "/api/comments" or not self.is_from_the_page():
+            if self.path != "/api/comments" or not self.is_from_the_page() or not self.has_token():
                 self.send_error(403)
                 return
             if self.headers.get("Content-Type") != "application/json":
@@ -86,7 +93,7 @@ def handler_for(directory: Path, port: int) -> type[BaseHTTPRequestHandler]:
             self.respond_json(201, comments)
 
         def do_DELETE(self) -> None:
-            if not self.path.startswith("/api/comments/") or not self.is_from_the_page():
+            if not self.path.startswith("/api/comments/") or not self.is_from_the_page() or not self.has_token():
                 self.send_error(403)
                 return
             self.respond_json(200, notes.remove(boards.load(directory), self.path.removeprefix("/api/comments/")))
@@ -95,6 +102,11 @@ def handler_for(directory: Path, port: int) -> type[BaseHTTPRequestHandler]:
         # Host stops DNS rebinding. Origin stops another site posting here from the owner's browser.
         def is_from_the_page(self) -> bool:
             return self.headers.get("Host") in own_hosts and self.headers.get("Origin") in own_origins
+
+        # Anything on this machine can send any header, so Host and Origin only stop browsers.
+        # The token, readable by the owner alone, stops the other accounts on a shared machine.
+        def has_token(self) -> bool:
+            return hmac.compare_digest(self.headers.get("Authorization", "").encode(), authorization)
 
         def respond_json(self, status: int, value: Any) -> None:
             self.respond(status, "application/json", json.dumps(value, ensure_ascii=False).encode())
@@ -135,6 +147,10 @@ def keep_in_sync(directory: Path) -> None:
 def serve(board: Board, port: int) -> None:
     if github.available():
         threading.Thread(target=keep_in_sync, args=(board.dir,), daemon=True).start()
-    print(f"The board is on http://127.0.0.1:{port}/ (Ctrl-C to stop).", flush=True)
+    # The link holds the token, so it is never printed here: the log can sit in a folder others can read.
+    print(
+        f"The board is on http://127.0.0.1:{port}/. Open it with {boards.open_command(port)} (Ctrl-C to stop).",
+        flush=True,
+    )
     with contextlib.suppress(KeyboardInterrupt):
-        HTTPServer(("127.0.0.1", port), handler_for(board.dir, port)).serve_forever()
+        HTTPServer(("127.0.0.1", port), handler_for(board.dir, port, user.server_token())).serve_forever()

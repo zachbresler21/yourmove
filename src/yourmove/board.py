@@ -26,7 +26,7 @@ STATES = (
 STALE_AFTER_DAYS = 5
 # Two short sentences. Detail belongs in the PR or the worktree, where it can be kept current.
 NEXT_LIMIT = 280
-FIELDS = ("id", "project", "state", "title", "next", "updated", "pr", "where", "waiting", "choices")
+FIELDS = ("id", "project", "state", "title", "next", "updated", "pr", "ticket", "where", "waiting", "choices")
 
 DIR_NAME = ".yourmove"
 CONFIG_FILE = "yourmove.json"
@@ -34,6 +34,7 @@ CARDS_FILE = "cards.jsonl"
 COMMENTS_FILE = "comments.jsonl"
 HISTORY_FILE = "history.jsonl"
 RULES_FILE = "RULES.md"
+PORT = 47600
 LOCK_WAIT_SECONDS = 5
 STALE_LOCK_SECONDS = 30
 
@@ -56,6 +57,10 @@ class Board:
     dir: Path
     owner: str
     projects: dict[str, Project]
+    tickets: str | None  # a link to a card's ticket, with {id} where the ticket ID goes
+
+    def ticket_link(self, ticket: str) -> str | None:
+        return self.tickets.replace("{id}", ticket) if self.tickets else None
 
     def path(self, name: str) -> Path:
         return self.dir / name
@@ -125,7 +130,17 @@ def load(directory: Path) -> Board:
         ):
             raise BoardError(f'Project "{key}" in {config_file} needs a "name", a "color" and a "repo" (owner/name).')
         parsed[key] = Project(project["name"], project["color"], project["repo"])
-    return Board(directory, owner.strip(), parsed)
+    tickets = config.get("tickets")
+    if tickets is not None and not (isinstance(tickets, str) and tickets.startswith("https://") and "{id}" in tickets):
+        raise BoardError(
+            f'"tickets" in {config_file} needs to be a link with {{id}} in it, '
+            'like "https://linear.app/acme/issue/{id}".'
+        )
+    return Board(directory, owner.strip(), parsed, tickets)
+
+
+def open_command(port: int) -> str:
+    return "`yourmove open`" if port == PORT else f"`yourmove open --port {port}`"
 
 
 def projects_of(card: Card) -> list[str]:
@@ -174,6 +189,10 @@ def errors_in(card: Any, board: Board) -> list[str]:
     for field in ("where", "waiting"):
         if field in card and not isinstance(card[field], str):
             errors.append(f'has a "{field}" that is not text')
+    if "ticket" in card and not (
+        isinstance(card["ticket"], str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", card["ticket"])
+    ):
+        errors.append(f'has a "ticket" that is not a ticket ID like SUN-142: {card["ticket"]}')
     choices = card.get("choices", [])
     if not isinstance(choices, list) or not all(isinstance(c, str) and c.strip() for c in choices):
         errors.append('has "choices" that are not a list of replies')

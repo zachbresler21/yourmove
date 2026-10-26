@@ -58,7 +58,20 @@ const check = (ok, what) => { checks.push(`${ok ? 'PASS' : 'FAIL'} ${what}`); if
 await send('Page.enable')
 await send('Runtime.enable')
 await send('Page.navigate', { url })
+
+if (phase === 'locked') {
+  await until('!document.getElementById("problem").hidden', 'the locked banner')
+  check((await value('document.getElementById("problem").textContent')).includes('yourmove open'), 'a page without the token says how to get in')
+  check(await value('document.querySelectorAll(".card").length') === 0, 'a page without the token shows no cards')
+  await shot('0-locked')
+  console.log(checks.join('\n'))
+  socket.close()
+  browser.kill()
+  process.exit()
+}
+
 await until('document.querySelectorAll(".card").length === 2', 'two cards drawn')
+check(!(await value('location.search')), 'the token leaves the address bar')
 check(await value('document.getElementById("heading").textContent') === "Ada's board", 'heading names the owner')
 check(await value('document.title') === '(1) Board', 'tab title counts needs-you')
 

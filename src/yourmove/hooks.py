@@ -14,9 +14,9 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from . import autostart, git, user
 from . import board as boards
 from . import comments as notes
-from . import git, user
 from .board import Board, Card, Cards
 from .github import MERGED_FROM
 
@@ -30,6 +30,8 @@ SESSION_DAYS = 7
 
 def run(event: str, payload: dict[str, Any]) -> str:
     """What to print for one hook event. Plain text becomes context; Stop prints a JSON decision."""
+    if event == "session-start":
+        autostart.refresh()
     cwd = Path(payload["cwd"])
     board = trusted_board(cwd)
     if board is None:
@@ -133,6 +135,12 @@ def describe(card: Card, board: Board) -> str:
     details.append(f"Next: {card['next']}")
     if boards.prs_of(card):
         details.append("PRs: " + ", ".join(f"#{pr}" for pr in boards.prs_of(card)))
+    if card.get("ticket"):
+        link = board.ticket_link(card["ticket"])
+        details.append(
+            f"Ticket: {card['ticket']}{f' ({link})' if link else ''}. Put {card['ticket']} in the branch name and "
+            "the PR title, so the team's tracker links the PR and moves the ticket itself."
+        )
     if card.get("waiting"):
         details.append(f"Waiting on: {card['waiting']}")
     return "\n".join(details)
