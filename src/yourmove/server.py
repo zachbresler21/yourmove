@@ -26,11 +26,13 @@ from .board import Board, BoardError
 PAGE = Path(__file__).with_name("board.html")
 MAX_BODY_BYTES = 8192
 SYNC_MINUTES = 10
+# The yourmove mark, docs/icon.svg, cropped to its tile. The y is drawn, not cut out, so it shows on dark tabs too.
 ICON = (
-    b"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'>"
-    b"<rect x='1' y='2' width='4' height='12' rx='1' fill='#c2410c'/>"
-    b"<rect x='6' y='2' width='4' height='8' rx='1' fill='#888'/>"
-    b"<rect x='11' y='2' width='4' height='5' rx='1' fill='#888'/></svg>"
+    b"<svg xmlns='http://www.w3.org/2000/svg' viewBox='144 144 736 736'>"
+    b"<path fill='#151412' d='M288 144H736Q880 144 880 288V736Q880 880 736 880H288"
+    b"Q144 880 144 736V288Q144 144 288 144Z'/>"
+    b"<path fill='#f4f2ee' d='M320 288H448V408Q448 456 512 456Q576 456 576 408V288H704V624Q704 784 544 784H416V672H528"
+    b"Q576 672 576 624V568Q544 576 512 576Q320 576 320 408Z'/></svg>"
 )
 
 
