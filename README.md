@@ -183,13 +183,14 @@ A comment reaches your sessions as your own words, so four things guard who can 
 - **Only the board page can post.** The server listens on 127.0.0.1 only, checks `Host` to stop
   DNS rebinding, and checks `Origin` so another site cannot post from your browser.
 - **Only you can reach the server.** Any program can fake those headers, so every request also needs
-  a token from `~/.config/yourmove/server-token`, readable by you alone. That keeps the other accounts
-  on a shared machine out. `yourmove open` hands the page the token through a file only you can read,
+  a token kept in `~/.config/yourmove/`, readable by you alone. That keeps the other accounts on a
+  shared machine out. `yourmove open` hands the page the token through a file only you can read,
   never a command line, and the page keeps it. The token is never printed or logged.
 
-One gap remains, as for any page on localhost: if another account takes the port while your server
-is down, a page it serves there can read the kept token. On a shared machine, keep the server running
-with `yourmove autostart` or your init system.
+Another account could take the port while your server is down and serve a page of its own there.
+So the server makes a new token each time it starts, and an old one the browser kept is worth
+nothing. `yourmove open` gives the browser the token only after whatever answers on the port proves
+it holds it. After the server restarts, run `yourmove open` again.
 
 `RULES.md` goes into every session's context, so trust a board's `RULES.md` the way you trust a
 repo's `CLAUDE.md`. Session state for the drift check lives in your home directory, never a

@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import hmac
 import json
+import re
+import secrets
 import threading
 import time
+import urllib.error
+import urllib.request
 from datetime import date
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 from . import board as boards
 from . import comments as notes
@@ -59,6 +65,13 @@ def handler_for(directory: Path, port: int, token: str) -> type[BaseHTTPRequestH
                 self.respond(200, "text/html; charset=utf-8", PAGE.read_bytes())
             elif path == "/favicon.svg":
                 self.respond(200, "image/svg+xml", ICON)
+            elif path == "/api/proof":
+                # Lets `yourmove open` check this is the owner's server before it hands over the token.
+                challenge = parse_qs(urlsplit(self.path).query).get("challenge", [""])[0]
+                if not re.fullmatch(r"[0-9a-f]{64}", challenge):
+                    self.send_error(400)
+                    return
+                self.respond_json(200, {"proof": proof(token, challenge)})
             elif path == "/api/board":
                 if not self.has_token():
                     self.respond_json(401, {"error": "This page needs the board's link. Run `yourmove open`."})
@@ -127,6 +140,21 @@ def handler_for(directory: Path, port: int, token: str) -> type[BaseHTTPRequestH
     return Handler
 
 
+def proof(token: str, challenge: str) -> str:
+    return hmac.new(token.encode(), challenge.encode(), hashlib.sha256).hexdigest()
+
+
+def is_owners_server(port: int, token: str) -> bool:
+    """Whether what answers on the port holds the token, without the token ever leaving this process."""
+    challenge = secrets.token_hex(32)
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/proof?challenge={challenge}", timeout=5) as response:
+            answer = json.loads(response.read())
+    except (OSError, ValueError):
+        return False
+    return isinstance(answer, dict) and hmac.compare_digest(str(answer.get("proof", "")), proof(token, challenge))
+
+
 def keep_in_sync(directory: Path) -> None:
     reported: set[str] = set()
     while True:
@@ -153,4 +181,4 @@ def serve(board: Board, port: int) -> None:
         flush=True,
     )
     with contextlib.suppress(KeyboardInterrupt):
-        HTTPServer(("127.0.0.1", port), handler_for(board.dir, port, user.server_token())).serve_forever()
+        HTTPServer(("127.0.0.1", port), handler_for(board.dir, port, user.new_server_token(port))).serve_forever()
