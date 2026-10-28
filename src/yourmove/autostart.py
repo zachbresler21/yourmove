@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from xml.parsers.expat import ExpatError
 
 from .board import PORT, Board, BoardError, open_command
 
@@ -38,6 +39,23 @@ def install(board: Board, port: int) -> str:
     )
 
 
+def read_agent(file: Path) -> tuple[Path, int, dict[str, str]] | None:
+    """None means this is not a LaunchAgent this code wrote, so callers leave it alone."""
+    try:
+        agent = plistlib.loads(file.read_bytes())
+        environment = dict(agent["EnvironmentVariables"])
+        arguments = list(agent["ProgramArguments"])
+        if arguments[1:3] != ["-m", "yourmove"] or "serve" not in arguments:
+            return None
+        if not isinstance(environment.get("PYTHONPATH"), str):
+            return None
+        board_dir = Path(arguments[arguments.index("--board") + 1])
+        port = int(arguments[arguments.index("--port") + 1]) if "--port" in arguments else PORT
+    except (OSError, plistlib.InvalidFileException, ExpatError, KeyError, IndexError, TypeError, ValueError):
+        return None
+    return board_dir, port, environment
+
+
 def refresh() -> None:
     """Move the login server onto this copy of yourmove when the copy it runs is gone or older.
 
@@ -47,15 +65,11 @@ def refresh() -> None:
     file = agent_file()
     if sys.platform != "darwin" or not file.exists():
         return
-    try:
-        agent = plistlib.loads(file.read_bytes())
-        environment = dict(agent["EnvironmentVariables"])
-        running = Path(environment["PYTHONPATH"])
-        arguments = list(agent["ProgramArguments"])
-        board_dir = Path(arguments[arguments.index("--board") + 1])
-        port = int(arguments[arguments.index("--port") + 1]) if "--port" in arguments else PORT
-    except (plistlib.InvalidFileException, KeyError, IndexError, TypeError, ValueError):
-        return  # Not a LaunchAgent this code wrote, so not one to rewrite.
+    agent = read_agent(file)
+    if agent is None:
+        return
+    board_dir, port, environment = agent
+    running = Path(environment["PYTHONPATH"])
     if running.exists() and not is_older_version(running):
         return
     start(board_dir, port, {**environment, "PYTHONPATH": str(SOURCE)})

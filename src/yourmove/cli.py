@@ -6,7 +6,9 @@ import argparse
 import html
 import json
 import os
+import socket
 import sys
+import time
 import webbrowser
 from datetime import date, timedelta
 from pathlib import Path
@@ -40,6 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
         return sub
 
     init = command("init", run_init, "Make a board in .yourmove/ here, with this repo as its first project.")
+    init.add_argument("--no-serve", action="store_true", help="make and trust the board without serving or opening it")
     init.add_argument("--owner", help="whose board it is (default: git user.name)")
 
     ls = command("ls", run_ls, "List the cards, column by column.")
@@ -165,8 +168,56 @@ def run_init(args: argparse.Namespace) -> int:
     user.trust(directory)
     print(f"Made a board in {directory}, owned by {owner}, with {len(projects)} project(s): {', '.join(projects)}.")
     print(f"Rename or add projects in {directory / boards.CONFIG_FILE}.")
-    print("Then `yourmove serve`, and `yourmove open` to see it.")
+    if sys.platform == "darwin" and not args.no_serve:
+        return serve_and_open(directory)
+    print("Then run `yourmove serve` and, in another terminal, `yourmove open`.")
     return 0
+
+
+def serve_and_open(directory: Path) -> int:
+    """macOS: serve the new board from login on and open it, unless something already serves the port."""
+    from . import autostart, server
+
+    agent_file = autostart.agent_file()
+    if agent_file.exists():
+        agent = autostart.read_agent(agent_file)
+        if agent is None:
+            print(
+                f"yourmove could not recognize the login server file {agent_file} and left it unchanged. "
+                "Run `yourmove autostart` from inside the new board to replace it."
+            )
+            return 0
+        existing_board, _, _ = agent
+        if existing_board.resolve() != directory.resolve() and (existing_board / boards.CONFIG_FILE).is_file():
+            print(
+                f"Your login server is set up for the board in {existing_board}. "
+                "Run `yourmove autostart` from inside the new board to move it here."
+            )
+            return 0
+    try:
+        with socket.create_connection(("127.0.0.1", PORT), timeout=0.5):
+            pass
+    except OSError:
+        pass
+    else:
+        print(
+            f"Something is already serving on port {PORT}, such as `yourmove serve` in a terminal. "
+            "Stop it, then run `yourmove autostart` from inside the new board."
+        )
+        return 0
+    board = boards.load(directory)
+    installed = autostart.install(board, PORT)
+    deadline = time.monotonic() + 5
+    while not server.is_owners_server(PORT, user.server_token(PORT)):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise BoardError(
+                f"The board server is not ready yet. Run `yourmove open` in a moment. "
+                f"Its log is {board.path('server.log')}."
+            )
+        time.sleep(min(0.25, remaining))
+    print(installed)
+    return open_board(PORT)
 
 
 # Committing a board is fine. These are this machine's alone.
@@ -336,18 +387,22 @@ def run_autostart(args: argparse.Namespace) -> int:
 
 
 def run_open(args: argparse.Namespace) -> int:
+    return open_board(args.port)
+
+
+def open_board(port: int) -> int:
     from . import server
 
-    token = user.server_token(args.port)
+    token = user.server_token(port)
     # Another account could be listening on the port while the owner's server is down.
-    if not server.is_owners_server(args.port, token):
+    if not server.is_owners_server(port, token):
         raise BoardError(
-            f"Your board server is not running on port {args.port}. Start it with `yourmove serve` "
+            f"Your board server is not running on port {port}. Start it with `yourmove serve` "
             "(or `yourmove autostart`), then open it again."
         )
     # Every account on a machine can read a command line, so the browser is never handed the token in one.
     # It opens a file only this user can read, which forwards to the link, the way Jupyter does.
-    url = html.escape(f"http://127.0.0.1:{args.port}/?token={token}")
+    url = html.escape(f"http://127.0.0.1:{port}/?token={token}")
     forward = user.private_dir(user.config_dir()) / "open.html"
     descriptor = os.open(forward, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(descriptor, "w") as file:
@@ -355,7 +410,7 @@ def run_open(args: argparse.Namespace) -> int:
             f'<!doctype html><meta http-equiv="refresh" content="0;url={url}"><a href="{url}">Open the board</a>\n'
         )
     webbrowser.open(forward.as_uri())
-    print(f"Opened the board on port {args.port}. With no browser here, the link is in {forward}.")
+    print(f"Opened the board on port {port}. With no browser here, the link is in {forward}.")
     return 0
 
 

@@ -177,6 +177,17 @@ class Server(BoardCase):
             self.assertEqual(self.call("DELETE", "/api/comments/abc", token=token)[0], 403)
         self.assertEqual(boards.read_lines(self.dir / boards.COMMENTS_FILE), [])
 
+    def test_serving_a_busy_port_leaves_the_running_servers_token_unchanged(self) -> None:
+        token = user.server_token(self.port)
+        with (
+            mock.patch.object(github, "available", return_value=False),
+            contextlib.redirect_stdout(io.StringIO()),
+            self.assertRaises(OSError),
+        ):
+            server.serve(self.board, self.port)
+        self.assertEqual(user.server_token(self.port), token)
+        self.assertEqual(self.call("GET", "/api/board")[0], 200)
+
     def test_open_hands_the_browser_the_token_through_a_private_file_never_a_command_line(self) -> None:
         out = io.StringIO()
         with mock.patch("webbrowser.open") as browser, contextlib.redirect_stdout(out):
@@ -233,6 +244,12 @@ class Server(BoardCase):
 
 
 class CommandLine(BoardCase):
+    def setUp(self) -> None:
+        super().setUp()
+        platform = mock.patch("sys.platform", "linux")
+        platform.start()
+        self.addCleanup(platform.stop)
+
     def cli(self, *args: str) -> tuple[int, str]:
         out = io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
@@ -348,6 +365,223 @@ class CommandLine(BoardCase):
         with mock.patch("sys.stdin", payload), contextlib.redirect_stdout(out):
             self.assertEqual(cli.main(["hook", "session-start"]), 0)
         self.assertIn("Ada's yourmove board", out.getvalue())
+
+
+class Init(BoardCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.target = self.root / "new-board" / boards.DIR_NAME
+        self.agent = self.root / "login.plist"
+        for patcher in (
+            mock.patch("sys.platform", "darwin"),
+            mock.patch("yourmove.git.current", return_value=None),
+            mock.patch("yourmove.git.repos_at_or_below", return_value=["acme/shop"]),
+            mock.patch.object(autostart, "agent_file", return_value=self.agent),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.launchctl = self.enter_mock("subprocess.run", return_value=subprocess.CompletedProcess([], 0, "", ""))
+        self.browser = self.enter_mock("webbrowser.open")
+        self.sleep = self.enter_mock("time.sleep")
+        self.clock = self.enter_mock("time.monotonic", side_effect=range(100))
+        self.check = self.enter_mock("yourmove.server.is_owners_server", return_value=False)
+        self.connection = self.enter_mock("socket.create_connection", side_effect=ConnectionRefusedError)
+
+    def enter_mock(self, target: str, **kwargs: Any) -> mock.MagicMock:
+        patcher = mock.patch(target, **kwargs)
+        result: mock.MagicMock = patcher.start()
+        self.addCleanup(patcher.stop)
+        return result
+
+    def init(self, *args: str) -> tuple[int, str]:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            code = cli.main(["--board", str(self.target), "init", "--owner", "Ada", *args])
+        return code, out.getvalue()
+
+    def write_agent(self, board: Path) -> bytes:
+        written = plistlib.dumps(
+            {
+                "ProgramArguments": ["python3", "-m", "yourmove", "--board", str(board), "serve"],
+                "EnvironmentVariables": {"PYTHONPATH": str(autostart.SOURCE)},
+            }
+        )
+        self.agent.write_bytes(written)
+        return written
+
+    def test_mac_init_without_serving_only_makes_and_trusts_the_board(self) -> None:
+        code, output = self.init("--no-serve")
+        self.assertEqual(code, 0)
+        self.assertEqual(boards.load(self.target).owner, "Ada")
+        self.assertTrue(user.is_trusted(self.target))
+        self.launchctl.assert_not_called()
+        self.browser.assert_not_called()
+        self.check.assert_not_called()
+        self.sleep.assert_not_called()
+        self.assertFalse(self.agent.exists())
+        self.connection.assert_not_called()
+        self.assertEqual(
+            output.splitlines()[-1],
+            "Then run `yourmove serve` and, in another terminal, `yourmove open`.",
+        )
+
+    def test_mac_init_installs_waits_for_the_current_token_and_opens_the_board(self) -> None:
+        self.check.side_effect = [False, True, True]
+        with mock.patch.object(user, "server_token", side_effect=["old", "new", "new"]):
+            code, output = self.init()
+        self.assertEqual(code, 0)
+        agent = plistlib.loads(self.agent.read_bytes())
+        self.assertEqual(agent["ProgramArguments"][-4:], [str(self.target), "serve", "--port", str(boards.PORT)])
+        self.assertEqual([call.args[0][1] for call in self.launchctl.call_args_list], ["bootout", "bootstrap"])
+        self.assertEqual(self.check.call_args_list, [mock.call(boards.PORT, token) for token in ("old", "new", "new")])
+        self.sleep.assert_called_once()
+        forward = user.config_dir() / "open.html"
+        self.browser.assert_called_once_with(forward.as_uri())
+        self.assertIn(f"http://127.0.0.1:{boards.PORT}/?token=new", forward.read_text())
+        self.assertEqual(forward.stat().st_mode & 0o777, 0o600)
+        self.assertIn("served from login on", output)
+        self.assertIn("Open it with `yourmove open`.", output)
+        self.assertEqual(output.count("served from login on"), 1)
+        self.assertIn("Opened the board", output)
+        self.assertNotIn("yourmove serve", output)
+
+    def test_mac_init_leaves_an_occupied_port_alone_and_says_how_to_start_after_stopping_it(self) -> None:
+        self.connection.side_effect = None
+        code, output = self.init()
+        self.assertEqual(code, 0)
+        self.assertTrue(user.is_trusted(self.target))
+        self.assertEqual(boards.load(self.target).owner, "Ada")
+        self.assertFalse(self.agent.exists())
+        self.launchctl.assert_not_called()
+        self.browser.assert_not_called()
+        self.check.assert_not_called()
+        self.assertIn(f"already serving on port {boards.PORT}", output)
+        self.assertIn("Stop it", output)
+        self.assertIn("`yourmove autostart` from inside the new board", output)
+
+    def test_mac_init_preserves_an_existing_login_server_and_says_how_to_move_it(self) -> None:
+        original = self.write_agent(self.dir)
+        code, output = self.init()
+        self.assertEqual(code, 0)
+        self.assertEqual(boards.load(self.target).owner, "Ada")
+        self.assertEqual(self.agent.read_bytes(), original)
+        self.launchctl.assert_not_called()
+        self.browser.assert_not_called()
+        self.check.assert_not_called()
+        self.sleep.assert_not_called()
+        self.assertIn("Made a board", output)
+        self.assertIn("Your login server is set up for the board in", output)
+        self.assertIn(str(self.dir), output)
+        self.connection.assert_not_called()
+        self.assertIn("`yourmove autostart` from inside the new board", output)
+        self.assertIn("Rename or add projects", output)
+
+    def test_mac_init_starts_when_the_agent_points_to_the_board_it_just_made(self) -> None:
+        self.target.parent.mkdir()
+        alias = self.root / "board-parent"
+        alias.symlink_to(self.target.parent, target_is_directory=True)
+        self.write_agent(alias / self.target.name)
+        self.check.return_value = True
+        code, output = self.init()
+        self.assertEqual(code, 0)
+        agent = plistlib.loads(self.agent.read_bytes())
+        self.assertEqual(agent["ProgramArguments"][-4:], [str(self.target), "serve", "--port", str(boards.PORT)])
+        self.connection.assert_called_once_with(("127.0.0.1", boards.PORT), timeout=0.5)
+        self.assertEqual([call.args[0][1] for call in self.launchctl.call_args_list], ["bootout", "bootstrap"])
+        self.browser.assert_called_once()
+        self.assertIn("Opened the board", output)
+        self.assertNotIn("move it here", output)
+
+    def test_mac_init_replaces_a_stale_agent_whose_board_is_gone(self) -> None:
+        self.write_agent(self.root / "gone" / boards.DIR_NAME)
+        self.check.return_value = True
+        code, output = self.init()
+        self.assertEqual(code, 0)
+        agent = plistlib.loads(self.agent.read_bytes())
+        self.assertEqual(agent["ProgramArguments"][-4:], [str(self.target), "serve", "--port", str(boards.PORT)])
+        self.connection.assert_called_once_with(("127.0.0.1", boards.PORT), timeout=0.5)
+        self.browser.assert_called_once()
+        self.assertIn("Opened the board", output)
+
+    def test_mac_init_leaves_an_unrecognized_agent_alone_and_says_so(self) -> None:
+        foreign = plistlib.dumps(
+            {
+                "ProgramArguments": ["python3", "-m", "other", "--board", str(self.dir), "serve"],
+                "EnvironmentVariables": {"PYTHONPATH": str(autostart.SOURCE)},
+            }
+        )
+        for index, original in enumerate(
+            (b"not a plist", b'<?xml version="1.0"?><plist><dict>', plistlib.dumps([]), foreign)
+        ):
+            with self.subTest(original):
+                self.target = self.root / str(index) / boards.DIR_NAME
+                self.agent.write_bytes(original)
+                code, output = self.init()
+                self.assertEqual(code, 0)
+                self.assertEqual(self.agent.read_bytes(), original)
+                self.assertTrue(user.is_trusted(self.target))
+                self.assertIn("could not recognize", output)
+                self.assertIn(str(self.agent), output)
+                self.assertIn("left it unchanged", output)
+        self.launchctl.assert_not_called()
+        self.browser.assert_not_called()
+        self.connection.assert_not_called()
+        self.check.assert_not_called()
+
+    def test_mac_init_keeps_the_board_and_trust_when_bootstrap_fails(self) -> None:
+        self.launchctl.return_value = subprocess.CompletedProcess([], 5, "", "Bootstrap failed: Input/output error")
+        code, output = self.init()
+        self.assertEqual(code, 1)
+        self.assertEqual(boards.load(self.target).owner, "Ada")
+        self.assertTrue((self.target / boards.CARDS_FILE).exists())
+        self.assertTrue(user.is_trusted(self.target))
+        self.assertIn("yourmove autostart", output)
+        self.assertIn("Input/output error", output)
+        self.browser.assert_not_called()
+        self.check.assert_not_called()
+
+    def test_mac_init_leaves_a_stale_agent_unchanged_when_the_port_is_occupied(self) -> None:
+        original = self.write_agent(self.root / "gone" / boards.DIR_NAME)
+        self.connection.side_effect = None
+        code, output = self.init()
+        self.assertEqual(code, 0)
+        self.assertEqual(self.agent.read_bytes(), original)
+        self.launchctl.assert_not_called()
+        self.browser.assert_not_called()
+        self.check.assert_not_called()
+        self.assertIn(f"already serving on port {boards.PORT}", output)
+
+    def test_mac_init_keeps_the_board_and_names_open_and_the_log_when_startup_times_out(self) -> None:
+        self.clock.side_effect = [0, 0, 0.5, 5]
+        code, output = self.init()
+        self.assertEqual(code, 1)
+        made = boards.load(self.target)
+        self.assertEqual(made.owner, "Ada")
+        self.assertTrue(made.path(boards.CARDS_FILE).exists())
+        self.assertTrue(user.is_trusted(self.target))
+        self.assertTrue(self.agent.exists())
+        self.assertEqual(self.check.call_count, 3)
+        self.assertEqual(self.sleep.call_count, 2)
+        self.browser.assert_not_called()
+        self.assertIn("`yourmove open` in a moment", output)
+        self.assertIn(str(made.path("server.log")), output)
+        self.assertNotIn("Opened the board", output)
+
+    def test_linux_init_makes_the_board_and_prints_the_serve_and_open_next_step(self) -> None:
+        with mock.patch("sys.platform", "linux"):
+            code, output = self.init()
+        self.assertEqual(code, 0)
+        self.assertEqual(boards.load(self.target).owner, "Ada")
+        self.launchctl.assert_not_called()
+        self.browser.assert_not_called()
+        self.check.assert_not_called()
+        self.sleep.assert_not_called()
+        self.assertFalse(self.agent.exists())
+        self.connection.assert_not_called()
+        self.assertEqual(
+            output.splitlines()[-1],
+            "Then run `yourmove serve` and, in another terminal, `yourmove open`.",
+        )
 
 
 class Autostart(BoardCase):

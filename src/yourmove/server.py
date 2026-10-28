@@ -175,12 +175,13 @@ def keep_in_sync(directory: Path) -> None:
 
 
 def serve(board: Board, port: int) -> None:
-    if github.available():
-        threading.Thread(target=keep_in_sync, args=(board.dir,), daemon=True).start()
-    # The link holds the token, so it is never printed here: the log can sit in a folder others can read.
-    print(
-        f"The board is on http://127.0.0.1:{port}/. Open it with {boards.open_command(port)} (Ctrl-C to stop).",
-        flush=True,
-    )
-    with contextlib.suppress(KeyboardInterrupt):
-        HTTPServer(("127.0.0.1", port), handler_for(board.dir, port, user.new_server_token(port))).serve_forever()
+    with contextlib.suppress(KeyboardInterrupt), HTTPServer(("127.0.0.1", port), BaseHTTPRequestHandler) as httpd:
+        httpd.RequestHandlerClass = handler_for(board.dir, port, user.new_server_token(port))
+        if github.available():
+            threading.Thread(target=keep_in_sync, args=(board.dir,), daemon=True).start()
+        # The link holds the token, so it is never printed here: the log can sit in a folder others can read.
+        print(
+            f"The board is on http://127.0.0.1:{port}/. Open it with {boards.open_command(port)} (Ctrl-C to stop).",
+            flush=True,
+        )
+        httpd.serve_forever()
