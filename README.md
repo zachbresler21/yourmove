@@ -47,19 +47,41 @@ claude plugin marketplace add zachbresler21/yourmove
 claude plugin install yourmove@yourmove
 ```
 
-**Make a board.** A board lives in a `.yourmove/` folder. Sessions find the nearest one above
-their working directory, the way git finds `.git`. Put it at the root of one repo, or in a
-folder above all your repos for one board across all of them:
+The plugin puts `yourmove` on the PATH of Claude Code sessions only. Run it there with the
+`!` prefix, or ask Claude to run it. To use it from a normal terminal too, install the command:
 
 ```sh
-cd ~/code && yourmove init     # writes .yourmove/yourmove.json with this repo as a project, and trusts it
-yourmove trust                 # instead of init, for a board that already exists
-yourmove serve                 # serves the board on http://127.0.0.1:47600/
-yourmove open                  # opens it in your browser, with the link that lets the page in
-yourmove autostart             # macOS: serve it from login on, instead of serve
+uv tool install git+https://github.com/zachbresler21/yourmove
 ```
 
-Then list your projects in `.yourmove/yourmove.json`:
+**Make a board.** A board lives in a `.yourmove/` folder. Sessions find the nearest one above
+their working directory, the way git finds `.git`. Put it at the root of one repo, or in a
+folder above all your repos for one board across all of them. In Claude Code, run:
+
+```sh
+! yourmove init
+```
+
+On macOS, this makes and trusts the board, serves it from login on, and opens it in your browser.
+If you already have a login server, it stays set up for its existing board. Run `yourmove autostart`
+from inside the new board to move the login server to it.
+
+To make a board without starting or opening it, use `yourmove init --no-serve`.
+
+Elsewhere, install the command for your terminal with the `uv tool install` command above.
+Run `yourmove serve` in a normal terminal, then `yourmove open` in another terminal.
+`serve` runs until you stop it, so do not run it with `!` in Claude Code.
+
+Other commands (use the `!` prefix in Claude Code, except for `serve`):
+
+```sh
+yourmove trust                 # trust a board that already exists
+yourmove serve                 # serve the board until you stop the command
+yourmove open                  # open a running board in your browser
+yourmove autostart             # macOS: serve this board from login on
+```
+
+Init writes one project per repo. Rename or add projects in `.yourmove/yourmove.json`:
 
 ```json
 {

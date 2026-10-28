@@ -36,7 +36,7 @@ git -C "$ROOT/shop/shop.wt" -c user.name=t -c user.email=t@t commit -q --allow-e
 git -C "$ROOT/shop/shop.wt" worktree add -q -b feature/checkout ../checkout
 
 cd "$ROOT"
-"$YOURMOVE" init --owner Ada >/dev/null
+"$YOURMOVE" init --no-serve --owner Ada >/dev/null
 "$YOURMOVE" add --project shop --title Checkout --next "Pick the launch price." --state needs-you \
   --where checkout --choice 'Ship at $25' --choice "Hold a week" >/dev/null
 "$YOURMOVE" add --project shop --title Search --next "Build it." --state in-progress >/dev/null
